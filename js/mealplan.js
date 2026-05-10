@@ -31,7 +31,7 @@ function renderPlan() {
 
   container.innerHTML = `
     <div class="plan-header">
-      <h2 class="plan-title">${_plan.name || 'Weekly Meal Plan'}</h2>
+      <h2 class="plan-title">${_plan.week_label || 'Weekly Meal Plan'}</h2>
       ${_plan.week_focus ? `<p class="plan-focus">${_plan.week_focus}</p>` : ''}
     </div>
     <div class="days-list">
