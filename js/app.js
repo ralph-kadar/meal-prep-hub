@@ -4,8 +4,8 @@ import { renderLoginScreen, renderUserPill,
          bindAuthButtons, onAuthChange }       from './auth.js';
 import { loadAndRenderPantry }                 from './pantry.js';
 import { loadAndRenderPlan }                   from './mealplan.js';
+import { formatDate }                          from './ui.js';
 
-// Track which tabs have been loaded so we don't re-fetch on every click
 const _loaded = { pantry: false, plan: false };
 
 // ─── Entry point ──────────────────────────────────────────
@@ -19,12 +19,8 @@ const _loaded = { pantry: false, plan: false };
 
   showApp(session.user);
 
-  // Listen for sign-out / session changes
   onAuthChange(s => {
-    if (!s) {
-      // Signed out — reload to clean state
-      window.location.reload();
-    }
+    if (!s) window.location.reload();
   });
 })();
 
@@ -40,55 +36,45 @@ function showApp(user) {
 
   app.innerHTML = `
     <header class="app-header">
-      <span class="app-logo">🥗</span>
-      <span class="app-title">Meal Prep Hub</span>
-      ${renderUserPill(user)}
+      <div>
+        <div class="header-title">🥗 Meal Prep Hub</div>
+        <div class="header-tagline">Ralph &amp; Csilla · Healthy Eating for Energy &amp; Longevity</div>
+      </div>
+      <div class="header-right">
+        <div class="date-badge">${formatDate()}</div>
+        <div class="header-actions">
+          <span class="save-indicator" id="saveIndicator"></span>
+          ${renderUserPill(user)}
+        </div>
+      </div>
     </header>
 
     <nav class="tab-nav">
-      <button class="tab-btn active" data-tab="pantry">🧊 Pantry</button>
-      <button class="tab-btn"        data-tab="plan">📅 Meal Plan</button>
+      <button class="tab-btn active" data-tab="pantry">🧺 Pantry</button>
+      <button class="tab-btn"        data-tab="plan">🍽️ Meal Plan</button>
     </nav>
 
-    <section id="tab-pantry" class="tab-content active">
-      <div id="urgencyBanner" class="urgency-banner" style="display:none"></div>
-      <div id="pantryStats"   class="pantry-stats"></div>
-      <div id="pantryGrid"    class="pantry-grid">
-        <p class="loading-state">Loading pantry…</p>
-      </div>
-    </section>
-
-    <section id="tab-plan" class="tab-content">
-      <div id="mealPlanContent" class="plan-content">
-        <p class="loading-state">Loading meal plan…</p>
-      </div>
-    </section>
+    <section id="tab-pantry" class="tab-content active"></section>
+    <section id="tab-plan"   class="tab-content"></section>
   `;
 
-  // Bind sign-out (rendered inside user pill)
   bindAuthButtons();
 
-  // Bind tab switching
   app.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  // Load the default tab
   loadTab('pantry');
 }
 
 // ─── Tab switching ────────────────────────────────────────
 function switchTab(name) {
-  // Update button states
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === name);
   });
-
-  // Show/hide content sections
   document.querySelectorAll('.tab-content').forEach(sec => {
     sec.classList.toggle('active', sec.id === `tab-${name}`);
   });
-
   loadTab(name);
 }
 
@@ -105,11 +91,8 @@ async function loadTab(name) {
     }
   } catch (err) {
     console.error(`Failed to load tab "${name}":`, err);
-    const el = name === 'pantry'
-      ? document.getElementById('pantryGrid')
-      : document.getElementById('mealPlanContent');
+    const el = document.getElementById(`tab-${name}`);
     if (el) el.innerHTML = `<p class="error-state">⚠️ Failed to load — ${err.message}</p>`;
-    // Allow retry on next click
     _loaded[name] = false;
   }
 }

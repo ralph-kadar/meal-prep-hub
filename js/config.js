@@ -16,6 +16,6 @@ export const RALPH_MULTIPLIERS = {
 };
 
 export const PROFILES = {
-  ralph:  { name: 'Ralph',  age: 30, height: 180, weight: 85,  kcal: 2300, protein: 140 },
-  csilla: { name: 'Csilla', age: 29, height: 156, weight: 56,  kcal: 1750, protein: 95  }
+  ralph:  { name: 'Ralph',  age: 30, height: 180, weight: 85,  kcal: 2300, protein: 140, carbs: 260, fat: 75 },
+  csilla: { name: 'Csilla', age: 29, height: 156, weight: 56,  kcal: 1750, protein: 95,  carbs: 200, fat: 58 }
 };
