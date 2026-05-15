@@ -28,6 +28,7 @@ export async function fetchPantry() {
   const { data, error } = await db
     .from('pantry_items')
     .select('*')
+    .is('deleted_at', null)
     .order('expiry_date', { ascending: true });
   if (error) throw error;
   return data;
@@ -37,6 +38,24 @@ export async function updatePantryItem(id, patch) {
   const { error } = await db
     .from('pantry_items')
     .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+export async function insertPantryItem(item) {
+  const { data, error } = await db
+    .from('pantry_items')
+    .insert(item)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deletePantryItem(id) {
+  const { error } = await db
+    .from('pantry_items')
+    .update({ deleted_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw error;
 }
