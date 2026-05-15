@@ -155,8 +155,11 @@ function bindEvents() {
         const itemId = target.dataset.itemId;
         const pct    = parseInt(target.dataset.pct, 10);
         _cookSelections[itemId] = pct;
-        // DOM-only chip highlight — no re-render
-        const row = document.getElementById(`csel-${CSS.escape(itemId)}`);
+        // DOM-only chip highlight — no re-render.
+        // Was: getElementById(`csel-${CSS.escape(itemId)}`) — wrong API pair:
+        // getElementById takes a literal string and doesn't process CSS escapes,
+        // so numeric IDs like "001" were never found. Using closest() instead.
+        const row = target.closest('.cook-sel');
         if (row) {
           row.querySelectorAll('button').forEach(b =>
             b.classList.toggle('sel', parseInt(b.dataset.pct, 10) === pct)
