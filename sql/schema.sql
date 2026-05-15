@@ -195,3 +195,19 @@ CREATE POLICY "household_only" ON meal_ingredients FOR ALL TO authenticated USIN
 CREATE POLICY "household_only" ON meal_steps       FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_only" ON meal_cook_log    FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_read" ON household_members FOR SELECT TO authenticated USING (auth.uid() IN (SELECT user_id FROM household_members));
+
+-- ── DML grants (Supabase default privileges don't apply to migrations) ──
+-- All tables need explicit grants; RLS policies enforce who can actually read/write.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE pantry_items     TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_plans       TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_days        TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meals            TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_priority    TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_ingredients TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_steps       TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_cook_log    TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE household_members TO authenticated, anon;
+
+-- ── RPC execute grants ──────────────────────────────────────────────────
+GRANT EXECUTE ON FUNCTION mark_meal_cooked(uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION unmark_meal_cooked(uuid)      TO authenticated;
