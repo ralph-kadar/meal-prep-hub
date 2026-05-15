@@ -25,6 +25,43 @@ import {
 
 import { openBulkAddModal } from './pantry.js';
 
+// ─── Shared simulation helper ────────────────────────────────
+// Simulates consumption of each pantry item across all UNCOOKED meals in
+// the active plan, using the same smart-default logic as the cook panel.
+// Returns: { [pantry_item_id]: { remaining_pct, will_be_used } }
+//
+// This is the canonical answer to "how much will be left after this week?"
+// Both gap-fill and the Opus prompt context use it — one source of truth.
+function simulatePantryConsumption(days, pantryById) {
+  const state = {};
+  for (const id in pantryById) {
+    const item = pantryById[id];
+    state[id] = {
+      remaining_pct: item.partial_remaining ?? 100,
+      will_be_used:  !!item.used,
+    };
+  }
+  for (const day of days) {
+    for (const meal of (day.meals || [])) {
+      if (meal.cooked) continue; // already happened — don't double-count
+      for (const ing of (meal.ingredients || [])) {
+        if (!ing.pantry_item_id || ing.is_pantry_staple) continue;
+        const s = state[ing.pantry_item_id];
+        if (!s || s.will_be_used) continue;
+        const pct = getDefaultRemaining(ing, pantryById[ing.pantry_item_id]);
+        if (pct === -1) continue;            // skip (staple/small-amount)
+        if (pct === 0) {
+          s.will_be_used  = true;
+          s.remaining_pct = 0;
+        } else {
+          s.remaining_pct = Math.min(s.remaining_pct, pct);
+        }
+      }
+    }
+  }
+  return state;
+}
+
 // ─── State ────────────────────────────────────────────────────
 let _pantry       = [];
 let _pantryById   = {};
@@ -341,48 +378,46 @@ function updateFooter(ticks) {
 }
 
 // ─── Gap-fill computation ─────────────────────────────────────
-// Compares active plan ingredient needs vs pantry stock.
-// Heuristic: each meal reference consumes ~30 % of the item.
-// Cannot do exact comparisons because quantities are free-text.
+// Uses simulatePantryConsumption (same model as the cook panel) to determine
+// which plan ingredients will be exhausted by the end of the week.
+// Items that getDefaultRemaining skips (oils, spices, small-amount alliums,
+// etc.) are automatically excluded — the simulation returns -1 for those and
+// skips them, so they never appear as gaps.
 function computeGapFill() {
   if (!_days.length) return [];
 
-  const usage = {};  // pantry_item_id → { item, mealIds, ings }
+  const sim = simulatePantryConsumption(_days, _pantryById);
+
+  // Track which meals reference each pantry item (for reason text).
+  const mealsByItem = {};
   for (const day of _days) {
     for (const meal of (day.meals || [])) {
       for (const ing of (meal.ingredients || [])) {
         if (!ing.pantry_item_id || ing.is_pantry_staple) continue;
-        const item = _pantryById[ing.pantry_item_id];
-        if (!item) continue;
-        if (!usage[ing.pantry_item_id]) {
-          usage[ing.pantry_item_id] = { item, mealIds: new Set(), ings: [] };
-        }
-        usage[ing.pantry_item_id].mealIds.add(meal.id);
-        usage[ing.pantry_item_id].ings.push(ing);
+        (mealsByItem[ing.pantry_item_id] ??= new Set()).add(meal.id);
       }
     }
   }
 
   const gaps = [];
-  for (const [id, { item, mealIds }] of Object.entries(usage)) {
-    const available    = item.used ? 0 : (item.partial_remaining ?? 100);
-    const mealCount    = mealIds.size;
-    const estimatedNeed = Math.min(100, mealCount * 30);
-
-    if (available < estimatedNeed) {
-      gaps.push({
-        id:              `gapfill_${id}`,
-        name:            item.name,
-        qty:             null,
-        category:        item.category,
-        buy_by_saturday: _thisSaturday,
-        reason:          mealCount === 1
-          ? 'Needed for a meal this week'
-          : `Used in ${mealCount} meals this week`,
-        source:          'gap_fill',
-        perishability_level: item.perishability_level,
-      });
-    }
+  for (const [id, { remaining_pct, will_be_used }] of Object.entries(sim)) {
+    if (!mealsByItem[id]) continue;           // not referenced by any meal
+    if (!will_be_used && remaining_pct >= 10) continue; // sufficient stock
+    const item = _pantryById[id];
+    if (!item) continue;
+    const mealCount = mealsByItem[id].size;
+    gaps.push({
+      id:              `gapfill_${id}`,
+      name:            item.name,
+      qty:             null,
+      category:        item.category,
+      buy_by_saturday: _thisSaturday,
+      reason:          mealCount === 1
+        ? 'Needed for a meal this week'
+        : `Used in ${mealCount} meals this week`,
+      source:          'gap_fill',
+      perishability_level: item.perishability_level,
+    });
   }
 
   return gaps;
@@ -591,13 +626,12 @@ async function openPredictFlow() {
 
 async function refreshAndRender() {
   closeConfirmModal();
-  const container = document.getElementById('tab-shop');
-  if (container) {
-    const prevScroll = window.scrollY;
-    _predictions = await fetchActivePredictions();
-    renderContent();
-    requestAnimationFrame(() => window.scrollTo(0, prevScroll));
-  }
+  const prevScroll = window.scrollY;
+  // Reload pantry + plan + predictions so gap-fill reflects any cook
+  // events that happened since the tab last loaded.
+  await refreshData();
+  renderContent();
+  requestAnimationFrame(() => window.scrollTo(0, prevScroll));
 }
 
 // ─── Opus prompt builder ──────────────────────────────────────
@@ -704,84 +738,65 @@ Reply in chat with: total count, the 3 highest-leverage picks, and any
 diversity gaps you couldn't fill in 2 weeks.`;
 }
 
-// ─── Pantry-state-after-plan simulation ──────────────────────
+// ─── Pantry-state-after-plan (Opus prompt context) ───────────
+// Delegates to the shared simulation helper — no separate logic here.
 function computePantryAfterPlan() {
-  // Clone relevant state for simulation (keep original _pantryById untouched)
-  const state = {};
-  for (const item of _pantry) {
-    state[item.id] = {
-      ...item,
-      partial_remaining: item.partial_remaining ?? 100,
-      used:              !!item.used,
+  const sim = simulatePantryConsumption(_days, _pantryById);
+  return Object.entries(sim).map(([id, s]) => {
+    const item = _pantryById[id];
+    return {
+      id,
+      name:                    item?.name,
+      category:                item?.category,
+      estimated_remaining_pct: s.will_be_used ? 0 : s.remaining_pct,
     };
-  }
-
-  for (const day of _days) {
-    for (const meal of (day.meals || [])) {
-      if (meal.cooked) continue; // already happened — don't double-count
-      for (const ing of (meal.ingredients || [])) {
-        if (!ing.pantry_item_id || ing.is_pantry_staple) continue;
-        const s = state[ing.pantry_item_id];
-        if (!s || s.used) continue;
-
-        const pct = getDefaultRemaining(ing, s);
-        if (pct === -1) continue;
-        if (pct === 0) {
-          s.used = true;
-          s.partial_remaining = 0;
-        } else {
-          s.partial_remaining = Math.min(s.partial_remaining, pct);
-        }
-      }
-    }
-  }
-
-  return Object.values(state).map(s => ({
-    id:                    s.id,
-    name:                  s.name,
-    category:              s.category,
-    estimated_remaining_pct: s.used ? 0 : s.partial_remaining,
-  }));
+  });
 }
 
-// ─── Plant diversity (heuristic) ─────────────────────────────
-// NOTE: Uses category-based heuristic (Produce/Legumes/Grains = plants).
-// A canonical plant list should be confirmed with Ralph — flagged in commit.
-function computePlantDiversity() {
-  const PLANT_CATS = new Set(['Produce', 'Legumes', 'Grains']);
-  const PLANT_SUBS = new Set([
-    'Leafy Greens', 'Cruciferous', 'Root Vegetables', 'Alliums',
-    'Mushrooms', 'Salad', 'Herbs', 'Fruit', 'Berries',
-    'Legumes', 'Whole Grains', 'Seeds', 'Nuts', 'Sprouts',
-  ]);
-  const TARGET_SUBS = [
-    'Leafy Greens', 'Cruciferous', 'Root Vegetables',
-    'Alliums', 'Mushrooms', 'Legumes', 'Whole Grains',
-  ];
+// ─── Plant diversity (tag-based) ─────────────────────────────
+// Pure projection of pantry_items.tags[]. Items that are clearly plants
+// but lack plant tags should be fixed via the P1-1 edit modal — this
+// function doesn't compensate for missing tags.
+//
+// NOTE: seeded data uses plural tag names ('grains', 'herbs', 'seeds',
+// 'allium'). Ticket spec includes singular forms too for forward compat.
+const PLANT_TAGS = new Set([
+  // as they appear in migrate_data.sql:
+  'vegetable', 'fruit', 'legume', 'grains', 'herbs', 'seeds',
+  'cruciferous', 'greens', 'salad', 'root', 'allium',
+  // ticket spec (forward compat for new items tagged with these):
+  'grain', 'herb', 'seed', 'nut', 'mushroom', 'sprout', 'leafy-greens',
+]);
 
+// Subcategories we want represented across the week (Opus context).
+const TARGET_TAGS = [
+  'greens', 'cruciferous', 'root', 'legume', 'allium', 'herbs', 'mushroom',
+];
+
+function computePlantDiversity() {
   const plantNames = new Set();
-  const repCats    = new Set();
+  const repTags    = new Set();
 
   for (const day of _days) {
     for (const meal of (day.meals || [])) {
       if (!meal.cooked) continue;
       for (const ing of (meal.ingredients || [])) {
         if (!ing.pantry_item_id) continue;
-        const item = _pantryById[ing.pantry_item_id];
+        const item  = _pantryById[ing.pantry_item_id];
         if (!item) continue;
-        if (PLANT_CATS.has(item.category) || PLANT_SUBS.has(item.subcategory)) {
-          plantNames.add(item.name);
-          if (item.category)    repCats.add(item.category);
-          if (item.subcategory) repCats.add(item.subcategory);
-        }
+        const tags  = item.tags || [];
+        const hits  = tags.filter(t => PLANT_TAGS.has(t));
+        if (!hits.length) continue;
+        plantNames.add(item.name);
+        hits.forEach(t => repTags.add(t));
       }
     }
   }
 
   return {
     count:           plantNames.size,
-    categories:      [...repCats].sort(),
-    underrepresented: TARGET_SUBS.filter(s => !repCats.has(s)),
+    categories:      [...repTags].sort(),
+    underrepresented: TARGET_TAGS.filter(t => !repTags.has(t)),
   };
 }
 
