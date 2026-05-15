@@ -2,7 +2,7 @@
 import { fetchActivePlan, fetchPantry, fetchCookLog,
          markMealCookedWithDeductions, unmarkMealCooked } from './supabase.js';
 import { RALPH_MULTIPLIERS, PROFILES }                    from './config.js';
-import { flashSaved }                                      from './ui.js';
+import { flashSaved, getDefaultRemaining }                  from './ui.js';
 
 // ─── Module state ─────────────────────────────────────────
 let _plan         = null;
@@ -386,37 +386,7 @@ function buildCookPanelHtml(meal, dayIdx, mealIdx) {
   `;
 }
 
-// ─── Smart default: % remaining after cooking ─────────────
-// Returns: -1 = skip, 0 = all gone, 25 | 50 | 75 = % remaining
-function getDefaultRemaining(ing, item) {
-  if (!item) return -1;
-
-  // Ingredient flagged as urgent → use it all
-  if (ing.urgent) return 0;
-
-  // Recipe amount says it all goes
-  const amt = [ing.quantity_csilla, ing.unit].filter(Boolean).join(' ').toLowerCase();
-  if (/\b(full|all remaining|all of it|last|entire)\b/.test(amt)) return 0;
-
-  // Critical perishability → use it all
-  if (item.perishability_level === 'critical') return 0;
-
-  // Stable pantry staples (oils, spices, baking, seeds, cooking liquids) → skip
-  const skipSubs = new Set(['Oils', 'Spices', 'Baking', 'Seeds', 'Cooking Liquids']);
-  if (item.perishability_level === 'stable' && skipSubs.has(item.subcategory)) return -1;
-
-  // Alliums used in small amounts (not a whole bunch) → skip
-  if (item.subcategory === 'Alliums' && !/\bbunch\b/.test(amt)) return -1;
-
-  // Single whole item that clearly uses the full stock
-  if (/^1\s+(whole|eggplant|melon|pineapple)\b/i.test(amt)) return 0;
-
-  // Frozen proteins used as a full pack → all gone
-  if (item.storage_location === 'freezer' && /\b(full|1 pack|1 fish|thawed)\b/.test(amt)) return 0;
-
-  // Default: assume roughly a quarter was used, 75% remains
-  return 75;
-}
+// getDefaultRemaining is now in ui.js — imported above.
 
 // ─── Toggle cook panel open/closed ────────────────────────
 function toggleCookPanel(dayIdx, mealIdx) {

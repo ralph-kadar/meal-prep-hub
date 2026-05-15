@@ -147,6 +147,28 @@ CREATE TABLE IF NOT EXISTS meal_cook_log (
 );
 
 
+-- ── SHOPPING PREDICTIONS ────────────────────────────────────
+-- Opus writes rows here via Supabase MCP. Gap-fill rows (source =
+-- 'gap_fill') are computed at render time and NEVER persisted here.
+
+CREATE TABLE IF NOT EXISTS shopping_predictions (
+  id              UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            TEXT    NOT NULL,
+  qty             TEXT,
+  category        TEXT,
+  buy_by_saturday DATE    NOT NULL,
+  reason          TEXT,
+  source          TEXT    NOT NULL,   -- 'predicted' (gap_fill = ephemeral)
+  is_active       BOOLEAN DEFAULT TRUE,
+  bought_at       TIMESTAMPTZ,
+  generated_at    TIMESTAMPTZ DEFAULT NOW(),
+  generated_by    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS shopping_active_idx ON shopping_predictions (buy_by_saturday)
+  WHERE is_active = TRUE AND bought_at IS NULL;
+
+
 -- ── HOUSEHOLD MEMBERS ───────────────────────────────────────
 -- Allowlist for RLS. Adding a new member = one INSERT here.
 
@@ -183,8 +205,9 @@ ALTER TABLE meals             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_priority     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_ingredients  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_steps        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE meal_cook_log     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE household_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE meal_cook_log          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shopping_predictions   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE household_members      ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "household_only" ON pantry_items     FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_only" ON meal_plans       FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
@@ -193,7 +216,8 @@ CREATE POLICY "household_only" ON meals            FOR ALL TO authenticated USIN
 CREATE POLICY "household_only" ON meal_priority    FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_only" ON meal_ingredients FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_only" ON meal_steps       FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
-CREATE POLICY "household_only" ON meal_cook_log    FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
+CREATE POLICY "household_only" ON meal_cook_log          FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
+CREATE POLICY "household_only" ON shopping_predictions   FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_read" ON household_members FOR SELECT TO authenticated USING (auth.uid() IN (SELECT user_id FROM household_members));
 
 -- ── DML grants (Supabase default privileges don't apply to migrations) ──
@@ -205,8 +229,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meals            TO authenticated,
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_priority    TO authenticated, anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_ingredients TO authenticated, anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_steps       TO authenticated, anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_cook_log    TO authenticated, anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE household_members TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE meal_cook_log         TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE shopping_predictions  TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE household_members     TO authenticated, anon;
 
 -- ── RPC execute grants ──────────────────────────────────────────────────
 GRANT EXECUTE ON FUNCTION mark_meal_cooked(uuid, jsonb) TO authenticated;

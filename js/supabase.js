@@ -60,6 +60,55 @@ export async function deletePantryItem(id) {
   if (error) throw error;
 }
 
+// ─── Shopping predictions ─────────────────────────────────
+
+// Fetch all active, un-bought predictions (used by the Shop tab).
+export async function fetchActivePredictions() {
+  const { data, error } = await db
+    .from('shopping_predictions')
+    .select('*')
+    .eq('is_active', true)
+    .is('bought_at', null)
+    .order('buy_by_saturday', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+// Insert a single prediction row (e.g. essentials watch "Add to Saturday").
+export async function insertPrediction(row) {
+  const { data, error } = await db
+    .from('shopping_predictions')
+    .insert(row)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Mark a prediction as bought (set bought_at to now).
+export async function markPredictionBought(id) {
+  const { error } = await db
+    .from('shopping_predictions')
+    .update({ bought_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// Last ~40 cooked meals for Opus context.
+// NOTE: falls back to meals.cooked_date because meal_cook_log may not have
+// enough rows yet in early weeks. Flag: switch to cook_log join when data matures.
+export async function fetchRecentCookedMeals(limit = 40) {
+  const { data, error } = await db
+    .from('meals')
+    .select('id, name, meal_type, cooked_date, meal_day_id')
+    .eq('cooked', true)
+    .not('cooked_date', 'is', null)
+    .order('cooked_date', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
 // ─── Meal Plan ────────────────────────────────────────────
 export async function fetchActivePlan() {
   // Fetch the active meal plan with all its nested data in one query

@@ -4,9 +4,10 @@ import { renderLoginScreen, renderUserPill,
          bindAuthButtons, onAuthChange }       from './auth.js';
 import { loadAndRenderPantry }                 from './pantry.js';
 import { loadAndRenderPlan }                   from './mealplan.js';
+import { loadAndRenderShop }                   from './shop.js';
 import { formatDate }                          from './ui.js';
 
-const _loaded = { pantry: false, plan: false };
+const _loaded = { pantry: false, plan: false, shop: false };
 
 // ─── Entry point ──────────────────────────────────────────
 (async function init() {
@@ -52,10 +53,12 @@ function showApp(user) {
     <nav class="tab-nav">
       <button class="tab-btn active" data-tab="pantry">🧺 Pantry</button>
       <button class="tab-btn"        data-tab="plan">🍽️ Meal Plan</button>
+      <button class="tab-btn"        data-tab="shop">🛒 Shop</button>
     </nav>
 
     <section id="tab-pantry" class="tab-content active"></section>
     <section id="tab-plan"   class="tab-content"></section>
+    <section id="tab-shop"   class="tab-content"></section>
   `;
 
   bindAuthButtons();
@@ -75,6 +78,8 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(sec => {
     sec.classList.toggle('active', sec.id === `tab-${name}`);
   });
+  // Shop tab always re-loads so predictions are fresh on every visit.
+  if (name === 'shop') _loaded.shop = false;
   loadTab(name);
 }
 
@@ -88,6 +93,8 @@ async function loadTab(name) {
       await loadAndRenderPantry();
     } else if (name === 'plan') {
       await loadAndRenderPlan();
+    } else if (name === 'shop') {
+      await loadAndRenderShop();
     }
   } catch (err) {
     console.error(`Failed to load tab "${name}":`, err);

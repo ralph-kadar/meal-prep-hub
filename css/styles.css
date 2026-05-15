@@ -768,6 +768,224 @@ button { cursor: pointer; font: inherit; }
 .btn-github:hover { opacity: 0.88; }
 
 
+/* ══ SHOP TAB ═══════════════════════════════════════════ */
+
+.shop-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 32px 4px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.shop-header-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.shop-predict-btn {
+  background: linear-gradient(135deg, #6c3483, #2d6a4f);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 18px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.shop-predict-btn:hover    { opacity: 0.88; }
+.shop-predict-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Sections ─────────────────────────────────────────── */
+.shop-section { margin: 14px 0 0; }
+
+.shop-section-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 32px;
+  cursor: pointer;
+  user-select: none;
+  gap: 8px;
+}
+.shop-section-header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+}
+.shop-section-chevron {
+  color: var(--muted);
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.shop-section-header.collapsed .shop-section-chevron { transform: rotate(-90deg); }
+
+.shop-section-body { padding: 2px 32px 8px; }
+.shop-section-body.hidden { display: none; }
+
+/* ── Running low (essentials) ─────────────────────────── */
+.running-low-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 6px; }
+.running-low-card {
+  background: #fff8f0;
+  border: 1.5px solid #f0c070;
+  border-radius: 10px;
+  padding: 9px 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.running-low-info   { flex: 1; min-width: 0; }
+.running-low-name   { font-weight: 600; font-size: 0.88rem; }
+.running-low-status { font-size: 0.75rem; color: var(--muted); margin-top: 1px; }
+.essential-add-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 13px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 36px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.essential-add-btn:hover   { background: #235a40; }
+.essential-add-btn:disabled { opacity: 0.6; cursor: default; }
+.essential-added-lbl { font-size: 0.76rem; color: var(--accent); font-weight: 600; flex-shrink: 0; }
+
+/* ── Shop rows (gap-fill + predictions) ───────────────── */
+.shop-category-group  { margin-bottom: 12px; }
+.shop-category-label  {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  padding: 6px 0 5px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.shop-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+.shop-row:last-child { border-bottom: none; }
+.shop-row-check {
+  width: 20px;
+  height: 20px;
+  margin-top: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.shop-row.ticked .shop-row-name { text-decoration: line-through; color: var(--muted); }
+
+.shop-row-content { flex: 1; min-width: 0; }
+.shop-row-main    { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.shop-row-name    { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+.shop-row-qty     { font-size: 0.8rem; color: var(--muted); }
+
+.shop-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+.shop-row-reason { font-size: 0.73rem; color: var(--muted); font-style: italic; }
+
+.perish-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.perish-dot.critical { background: #c0392b; }
+.perish-dot.high     { background: #e67e22; }
+.perish-dot.medium   { background: #2980b9; }
+.perish-dot.low      { background: #27ae60; }
+.perish-dot.stable   { background: #95a5a6; }
+
+.source-pill {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 8px;
+}
+.source-pill.plan      { background: #d5f5e3; color: #1e8449; }
+.source-pill.predicted { background: #e8daef; color: #6c3483; }
+.source-pill.essential { background: #fdebd0; color: #d35400; }
+
+.shop-empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-style: italic;
+  padding: 6px 0 10px;
+}
+
+/* ── Shop footer (sticky) ─────────────────────────────── */
+.shop-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  border-top: 1.5px solid var(--border);
+  padding: 12px 32px 16px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.shop-ticked-count {
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* ── Prompt / confirm modal ───────────────────────────── */
+.confirm-modal {
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  max-width: 420px;
+  width: 100%;
+  padding: 28px 28px 22px;
+}
+.confirm-modal h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.confirm-modal p {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 0 0 20px;
+  line-height: 1.55;
+}
+.confirm-modal-btns {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 /* ══ ADD / EDIT PANTRY ITEMS ════════════════════════════ */
 
 /* "+ Add item" bar sits between the stats bar and controls */
@@ -992,4 +1210,13 @@ button { cursor: pointer; font: inherit; }
   .item-modal { max-width: 100%; border-radius: 20px 20px 0 0; max-height: 92vh; }
   .add-item-bar { padding-left: 16px; padding-right: 16px; }
   .form-grid-2 { grid-template-columns: 1fr; }
+
+  /* Shop tab mobile */
+  .shop-header,
+  .shop-section-header,
+  .shop-section-body,
+  .shop-footer { padding-left: 16px; padding-right: 16px; }
+  .shop-footer { flex-direction: column; }
+  .shop-footer .footer-btn { width: 100%; justify-content: center; }
+  .shop-predict-btn { font-size: 0.8rem; padding: 9px 14px; }
 }

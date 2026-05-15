@@ -7,6 +7,13 @@ let _openPartialId = null;
 let _pendingPct    = null;
 let _editingId     = null;   // null = add mode, string = edit mode
 
+// Bulk-add state (used by the Shop tab's "mark ticked as bought" flow)
+let _bulkQueue      = null;  // array of prefill objects | null (not in bulk mode)
+let _bulkIdx        = 0;
+let _bulkSaved      = [];    // items saved so far in this session
+let _bulkPrefills   = [];    // original prefill rows (parallel array for _predictionId lookup)
+let _bulkOnComplete = null;  // callback(savedItems)
+
 const LS_KEY = 'mealprep-pantry-filters';
 
 let _filters = {
@@ -548,6 +555,19 @@ function openItemModal(id = null) {
 function closeItemModal() {
   document.getElementById('itemModalOverlay').classList.remove('open');
   _editingId = null;
+
+  // If the user hits Cancel mid-bulk, notify the caller with whatever was
+  // saved so far (so bought predictions are still marked correctly).
+  if (_bulkQueue !== null) {
+    const onComplete = _bulkOnComplete;
+    const saved      = [..._bulkSaved];
+    _bulkQueue      = null;
+    _bulkIdx        = 0;
+    _bulkSaved      = [];
+    _bulkPrefills   = [];
+    _bulkOnComplete = null;
+    if (saved.length > 0) onComplete?.(saved);
+  }
 }
 
 function populateDataLists() {
@@ -665,8 +685,53 @@ async function submitItemForm(e) {
       renderAll();
       alert('Save failed: ' + (err.message || 'Unknown error'));
     }
+  } else if (_bulkQueue !== null) {
+    // ── Bulk add (sequential, no optimistic close) ────────
+    // In bulk mode we wait for each INSERT to complete before advancing
+    // so the form is available for error display on failure.
+    try {
+      const inserted = await insertPantryItem({ ...data, id: nextId() });
+      _items.push(inserted);
+
+      _bulkSaved.push({ ...inserted, _predictionId: _bulkPrefills[_bulkIdx]?._predictionId });
+      _bulkIdx++;
+
+      const N = _bulkQueue.length;
+      if (_bulkIdx < N) {
+        // Advance to next prefill row
+        populateDataLists();
+        populateModalFromPrefill(_bulkQueue[_bulkIdx]);
+        document.getElementById('itemModalTitle').textContent = `Add Item (${_bulkIdx + 1} of ${N})`;
+        const isLast = _bulkIdx === N - 1;
+        saveBtn.textContent = isLast ? 'Save & finish ✓' : 'Save & next →';
+        saveBtn.disabled    = false;
+      } else {
+        // All rows saved — fire callback
+        const onComplete = _bulkOnComplete;
+        const saved      = [..._bulkSaved];
+        _bulkQueue      = null;
+        _bulkIdx        = 0;
+        _bulkSaved      = [];
+        _bulkPrefills   = [];
+        _bulkOnComplete = null;
+        closeItemModal();  // safe: _bulkQueue already cleared
+        renderAll();
+        onComplete?.(saved);
+        flashSaved();
+      }
+    } catch (err) {
+      console.error('Bulk insert failed:', err);
+      const errEl = document.getElementById('formErrors');
+      errEl.textContent = 'Save failed: ' + (err.message || 'Unknown error');
+      errEl.style.display = 'block';
+      saveBtn.disabled    = false;
+      const isLast = _bulkIdx === _bulkQueue.length - 1;
+      saveBtn.textContent = isLast ? 'Save & finish ✓' : 'Save & next →';
+    }
+    return;
+
   } else {
-    // ── Add ──────────────────────────────────────────────
+    // ── Single add (optimistic close then INSERT) ─────────
     const tempId  = nextId();
     const newItem = { id: tempId, ...data, used: false, created_at: new Date().toISOString() };
     _items.push(newItem);
@@ -687,9 +752,56 @@ async function submitItemForm(e) {
     }
   }
 
-  // Re-enable save button in case modal is re-opened quickly
+  // Re-enable save button (single-add path only — bulk handles its own re-enable)
   saveBtn.disabled    = false;
   saveBtn.textContent = _editingId ? 'Save changes' : 'Add item';
+}
+
+// ─── Bulk-add modal (used by shop.js "mark ticked as bought") ─
+// Opens the same P1-1 modal in sequential-form mode: the user sees
+// one row at a time (1 of N), hits "Save & next", and the callback
+// fires with all saved items once the last row is saved (or with
+// partial results if Cancel is hit mid-way).
+export function openBulkAddModal(rows, onComplete) {
+  if (!rows?.length) return;
+
+  _bulkQueue      = [...rows];
+  _bulkPrefills   = [...rows];
+  _bulkIdx        = 0;
+  _bulkSaved      = [];
+  _bulkOnComplete = onComplete;
+  _editingId      = null; // always add mode in bulk
+
+  // Build modal if the user hasn't visited the Pantry tab yet
+  if (!document.getElementById('itemModalOverlay')) buildModal();
+
+  populateDataLists();
+  populateModalFromPrefill(_bulkQueue[0]);
+
+  const N = rows.length;
+  document.getElementById('itemModalTitle').textContent  = N > 1 ? `Add Item (1 of ${N})` : 'Add Item';
+  document.getElementById('itemSaveBtn').textContent     = N > 1 ? 'Save & next →' : 'Add item';
+  document.getElementById('itemDeleteBtn').style.display = 'none';
+
+  document.getElementById('itemModalOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-name').focus(), 50);
+}
+
+// Populate the modal form from a shopping prefill object (not a pantry item row).
+// Called when advancing through bulk-add queue rows.
+function populateModalFromPrefill(prefill) {
+  document.getElementById('itemForm').reset();
+  document.getElementById('formErrors').style.display  = 'none';
+  document.getElementById('formWarning').style.display = 'none';
+
+  document.getElementById('f-purchase-date').value = today();
+
+  if (prefill.name)                document.getElementById('f-name').value          = prefill.name;
+  if (prefill.category)            document.getElementById('f-category').value       = prefill.category;
+  if (prefill.quantity)            document.getElementById('f-quantity').value       = prefill.quantity;
+  if (prefill.unit)                document.getElementById('f-unit').value           = prefill.unit;
+  if (prefill.perishability_level) document.getElementById('f-perish').value         = prefill.perishability_level;
+  if (prefill.expiry_date)         document.getElementById('f-expiry-date').value    = prefill.expiry_date;
 }
 
 async function deleteItem(id) {
