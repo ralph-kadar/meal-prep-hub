@@ -527,6 +527,76 @@ button { cursor: pointer; font: inherit; }
 }
 
 
+/* Cook panel (ingredient deduction UI) */
+.cook-panel {
+  background: #f0f4ff;
+  border: 1px solid #c3d7f0;
+  border-radius: 10px;
+  padding: 11px 13px 10px;
+  margin: 0 14px 12px;
+}
+.cook-panel > .cook-panel-label {
+  font-size: 0.76rem;
+  color: #084298;
+  font-weight: 700;
+  display: block;
+  margin-bottom: 9px;
+}
+.cook-item {
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+.cook-item:last-of-type { border-bottom: none; }
+.cook-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+.cing-name { font-size: 0.8rem; font-weight: 600; flex: 1; }
+.cing-amt  { font-size: 0.69rem; color: var(--muted); white-space: nowrap; }
+.cook-sel  { display: flex; gap: 4px; flex-wrap: wrap; }
+.cook-sel button {
+  padding: 3px 8px;
+  border-radius: 7px;
+  border: 1.5px solid #c3d7f0;
+  background: white;
+  color: #084298;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+  min-height: 32px;
+}
+.cook-sel button:hover { background: #dceeff; }
+.cook-sel button.sel   { background: var(--accent); color: white; border-color: var(--accent); }
+.cook-sel button.skip-btn { color: var(--muted); border-color: var(--border); }
+.cook-sel button.skip-btn.sel { background: #888; color: white; border-color: #888; }
+.cook-confirm-btn {
+  width: 100%;
+  margin-top: 9px;
+  padding: 8px;
+  border-radius: 7px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 40px;
+  transition: background 0.15s;
+}
+.cook-confirm-btn:hover { background: #1e5236; }
+.cook-no-match {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.cook-btn--open { background: #e8ecf8; color: #084298; }
+
+
 /* ══ RECIPE MODAL ═══════════════════════════════════════ */
 .modal-overlay {
   position: fixed;

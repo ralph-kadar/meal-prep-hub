@@ -136,6 +136,17 @@ CREATE TABLE IF NOT EXISTS meal_steps (
 );
 
 
+-- ── MEAL COOK LOG ───────────────────────────────────────────
+-- Stores the per-ingredient deduction snapshot taken when a meal
+-- is cooked. Used to reverse the pantry changes on uncook.
+
+CREATE TABLE IF NOT EXISTS meal_cook_log (
+  meal_id    UUID PRIMARY KEY REFERENCES meals(id) ON DELETE CASCADE,
+  cooked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deductions JSONB NOT NULL  -- [{pantry_item_id, prev_used, prev_partial, applied_pct}]
+);
+
+
 -- ── HOUSEHOLD MEMBERS ───────────────────────────────────────
 -- Allowlist for RLS. Adding a new member = one INSERT here.
 
@@ -146,7 +157,9 @@ CREATE TABLE IF NOT EXISTS household_members (
 );
 
 
--- ── HELPER FUNCTION ─────────────────────────────────────────
+-- ── HELPER FUNCTIONS ────────────────────────────────────────
+-- See migrations/003_meal_cook_log.sql for mark_meal_cooked()
+-- and unmark_meal_cooked() definitions.
 
 CREATE OR REPLACE FUNCTION is_household_member()
 RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER STABLE AS $$
@@ -170,6 +183,7 @@ ALTER TABLE meals             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_priority     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_ingredients  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_steps        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE meal_cook_log     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE household_members ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "household_only" ON pantry_items     FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
@@ -179,4 +193,5 @@ CREATE POLICY "household_only" ON meals            FOR ALL TO authenticated USIN
 CREATE POLICY "household_only" ON meal_priority    FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_only" ON meal_ingredients FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_only" ON meal_steps       FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
+CREATE POLICY "household_only" ON meal_cook_log    FOR ALL TO authenticated USING (is_household_member()) WITH CHECK (is_household_member());
 CREATE POLICY "household_read" ON household_members FOR SELECT TO authenticated USING (auth.uid() IN (SELECT user_id FROM household_members));

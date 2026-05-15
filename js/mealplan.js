@@ -1,11 +1,19 @@
 // ─── Meal Plan Module ─────────────────────────────────────
-import { fetchActivePlan, setMealCooked } from './supabase.js';
-import { RALPH_MULTIPLIERS, PROFILES }    from './config.js';
-import { flashSaved }                      from './ui.js';
+import { fetchActivePlan, fetchPantry, fetchCookLog,
+         markMealCookedWithDeductions, unmarkMealCooked } from './supabase.js';
+import { RALPH_MULTIPLIERS, PROFILES }                    from './config.js';
+import { flashSaved }                                      from './ui.js';
 
-let _plan      = null;
-let _days      = [];
-let _activeDay = 0;
+// ─── Module state ─────────────────────────────────────────
+let _plan         = null;
+let _days         = [];
+let _activeDay    = 0;
+let _pantryItems  = {};   // { pantry_item_id → pantry_item row }
+let _cookLog      = {};   // { meal_id → deductions[] }   (local cache of meal_cook_log)
+
+// Cook-panel state (only one panel open at a time)
+let _openCookKey    = null;   // "${dayIdx}-${mealIdx}" or null
+let _cookSelections = {};     // { pantry_item_id → pct }  (-1|0|25|50|75)
 
 const TYPE_LABEL = {
   breakfast: '🌅 Breakfast',
@@ -27,6 +35,16 @@ export async function loadAndRenderPlan() {
   _plan = result.plan;
   _days = result.days;
   _activeDay = 0;
+
+  // Fetch pantry items and cook log in parallel
+  const allMealIds = _days.flatMap(d => d.meals.map(m => m.id));
+  const [pantryData, logData] = await Promise.all([
+    fetchPantry(),
+    fetchCookLog(allMealIds),
+  ]);
+
+  _pantryItems = Object.fromEntries(pantryData.map(p => [p.id, p]));
+  _cookLog     = Object.fromEntries(logData.map(l => [l.meal_id, l.deductions]));
 
   renderShell();
   bindEvents();
@@ -74,7 +92,7 @@ function renderShell() {
     <div class="day-view" id="dayView"></div>
   `;
 
-  // Inject modal once into body if not already present
+  // Inject recipe modal once into body
   if (!document.getElementById('recipeModalOverlay')) {
     const overlay = document.createElement('div');
     overlay.id        = 'recipeModalOverlay';
@@ -92,7 +110,6 @@ function renderShell() {
       </div>
     `;
     document.body.appendChild(overlay);
-    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
   }
 }
 
@@ -106,32 +123,73 @@ function bindEvents() {
     if (!target) return;
 
     switch (target.dataset.action) {
+
       case 'set-day': {
         _activeDay = parseInt(target.dataset.dayIdx, 10);
         renderDayNav();
         renderDayView();
         break;
       }
+
       case 'open-modal': {
-        const dayIdx  = parseInt(target.dataset.dayIdx,  10);
-        const mealIdx = parseInt(target.dataset.mealIdx, 10);
-        openModal(dayIdx, mealIdx);
+        // Don't open modal when click came from the cook area
+        if (e.target.closest('.cook-btn-wrap, .cook-panel')) break;
+        openModal(
+          parseInt(target.dataset.dayIdx,  10),
+          parseInt(target.dataset.mealIdx, 10)
+        );
         break;
       }
-      case 'toggle-cooked': {
+
+      case 'toggle-cook-panel': {
         e.stopPropagation();
-        toggleCooked(target.dataset.mealId);
+        toggleCookPanel(
+          parseInt(target.dataset.dayIdx,  10),
+          parseInt(target.dataset.mealIdx, 10)
+        );
         break;
       }
+
+      case 'set-cook-sel': {
+        e.stopPropagation();
+        const itemId = target.dataset.itemId;
+        const pct    = parseInt(target.dataset.pct, 10);
+        _cookSelections[itemId] = pct;
+        // DOM-only chip highlight — no re-render
+        const row = document.getElementById(`csel-${CSS.escape(itemId)}`);
+        if (row) {
+          row.querySelectorAll('button').forEach(b =>
+            b.classList.toggle('sel', parseInt(b.dataset.pct, 10) === pct)
+          );
+        }
+        break;
+      }
+
+      case 'confirm-cooked': {
+        e.stopPropagation();
+        confirmCooked(
+          parseInt(target.dataset.dayIdx,  10),
+          parseInt(target.dataset.mealIdx, 10)
+        );
+        break;
+      }
+
+      case 'unmark-cooked': {
+        e.stopPropagation();
+        unmarkCooked(target.dataset.mealId);
+        break;
+      }
+
+      case 'panel-noop':
+        // Absorb click so it doesn't bubble to open-modal
+        break;
     }
   });
 
-  // Close modal — delegated on body so it catches overlay clicks
+  // Close modal on overlay click or Escape
   document.addEventListener('click', e => {
-    const t = e.target.closest('[data-action="close-modal"]');
-    if (t) closeModal();
+    if (e.target.closest('[data-action="close-modal"]')) closeModal();
   });
-
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeModal();
   });
@@ -144,7 +202,6 @@ function renderDayNav() {
 
   nav.innerHTML = _days.map((day, i) => {
     const allCooked = day.meals.length > 0 && day.meals.every(m => m.cooked);
-    const anyUrgent = false; // could add expiry logic here if needed
     return `
       <div class="day-pill${i === _activeDay ? ' active' : ''}"
            data-action="set-day" data-day-idx="${i}">
@@ -152,7 +209,6 @@ function renderDayNav() {
         <div class="dpdate">${dayShortDate(i)}</div>
         <div class="dpfocus">${escHtml(day.focus || '')}</div>
         ${allCooked ? '<div class="urgency-dot" style="background:var(--accent)"></div>' : ''}
-        ${anyUrgent ? '<div class="urgency-dot"></div>' : ''}
       </div>
     `;
   }).join('');
@@ -201,23 +257,14 @@ function renderDayView() {
 
 // ─── Meal card ────────────────────────────────────────────
 function renderMealCard(meal, dayIdx, mealIdx) {
-  const cm = cMacros(meal);
-  const rm = rMacros(cm);
+  const cm      = cMacros(meal);
+  const rm      = rMacros(cm);
   const cooked  = meal.cooked;
   const typeKey = meal.meal_type || 'dinner';
 
   const priorityTags = (meal.priority || [])
     .map(p => `<span class="priority-tag${p.urgent ? ' urgent' : ''}">${p.urgent ? '⚡ ' : ''}${escHtml(p.label)}</span>`)
     .join('');
-
-  const cookArea = cooked
-    ? `<div class="cooked-stamp">
-         ✅ Cooked${meal.cooked_date ? ' ' + meal.cooked_date : ''}
-         <button class="uncook-link" data-action="toggle-cooked" data-meal-id="${meal.id}">undo</button>
-       </div>`
-    : `<div class="cook-btn-wrap">
-         <button class="cook-btn" data-action="toggle-cooked" data-meal-id="${meal.id}">🍳 Mark as cooked</button>
-       </div>`;
 
   return `
     <div class="meal-card${cooked ? ' meal-card--cooked' : ''}"
@@ -249,9 +296,276 @@ function renderMealCard(meal, dayIdx, mealIdx) {
         </div>
       </div>
       <div class="expand-hint">Tap to see recipe &amp; steps →</div>
-      ${cookArea}
+      ${cookAreaHtml(meal, dayIdx, mealIdx)}
     </div>
   `;
+}
+
+// ─── Cook area (bottom of meal card) ─────────────────────
+function cookAreaHtml(meal, dayIdx, mealIdx) {
+  // Already cooked → show stamp with undo
+  if (meal.cooked) {
+    return `
+      <div class="cooked-stamp">
+        ✅ Cooked${meal.cooked_date ? ' ' + meal.cooked_date : ''}
+        <button class="uncook-link"
+                data-action="unmark-cooked"
+                data-meal-id="${meal.id}">undo</button>
+      </div>`;
+  }
+
+  const cookKey   = `${dayIdx}-${mealIdx}`;
+  const panelOpen = _openCookKey === cookKey;
+
+  return `
+    <div class="cook-btn-wrap" data-action="panel-noop">
+      <button class="cook-btn${panelOpen ? ' cook-btn--open' : ''}"
+              data-action="toggle-cook-panel"
+              data-day-idx="${dayIdx}" data-meal-idx="${mealIdx}">
+        ${panelOpen ? '✕ Cancel' : '🍳 Mark as cooked'}
+      </button>
+    </div>
+    ${panelOpen ? `<div class="cook-panel" data-action="panel-noop">${buildCookPanelHtml(meal, dayIdx, mealIdx)}</div>` : ''}
+  `;
+}
+
+// ─── Cook panel HTML ──────────────────────────────────────
+function buildCookPanelHtml(meal, dayIdx, mealIdx) {
+  const cookKey = `${dayIdx}-${mealIdx}`;
+
+  // Ingredients that have a pantry link and aren't already fully used
+  const panelRows = (meal.ingredients || [])
+    .filter(i => i.pantry_item_id && _pantryItems[i.pantry_item_id] && !_pantryItems[i.pantry_item_id].used)
+    .map(ing => {
+      const item  = _pantryItems[ing.pantry_item_id];
+      const amtStr = [ing.quantity_csilla, ing.unit].filter(Boolean).join(' ');
+      // Resolve selection: explicit chip choice, or smart default
+      const sel = _cookSelections[ing.pantry_item_id] !== undefined
+        ? _cookSelections[ing.pantry_item_id]
+        : getDefaultRemaining(ing, item);
+
+      const chips = [
+        { pct:  0, label: 'All gone' },
+        { pct: 25, label: '25% left' },
+        { pct: 50, label: '50% left' },
+        { pct: 75, label: '75% left' },
+        { pct: -1, label: 'Skip',     cls: 'skip-btn' },
+      ].map(o => `
+        <button class="${o.cls || ''}${sel === o.pct ? ' sel' : ''}"
+                data-action="set-cook-sel"
+                data-item-id="${escHtml(ing.pantry_item_id)}"
+                data-pct="${o.pct}">${o.label}</button>
+      `).join('');
+
+      return `
+        <div class="cook-item">
+          <div class="cook-item-top">
+            <span class="cing-name">${escHtml(item.name)}</span>
+            ${amtStr ? `<span class="cing-amt">${escHtml(amtStr)}</span>` : ''}
+          </div>
+          <div class="cook-sel" id="csel-${escHtml(ing.pantry_item_id)}">${chips}</div>
+        </div>
+      `;
+    });
+
+  if (panelRows.length === 0) {
+    return `
+      <p class="cook-no-match">All pantry items for this meal are already marked used.</p>
+      <button class="cook-confirm-btn"
+              data-action="confirm-cooked"
+              data-day-idx="${dayIdx}" data-meal-idx="${mealIdx}">✓ Mark cooked anyway</button>
+    `;
+  }
+
+  return `
+    <span class="cook-panel-label">🍳 How much of each ingredient is left after cooking?</span>
+    ${panelRows.join('')}
+    <button class="cook-confirm-btn"
+            data-action="confirm-cooked"
+            data-day-idx="${dayIdx}" data-meal-idx="${mealIdx}">✓ Update pantry</button>
+  `;
+}
+
+// ─── Smart default: % remaining after cooking ─────────────
+// Returns: -1 = skip, 0 = all gone, 25 | 50 | 75 = % remaining
+function getDefaultRemaining(ing, item) {
+  if (!item) return -1;
+
+  // Ingredient flagged as urgent → use it all
+  if (ing.urgent) return 0;
+
+  // Recipe amount says it all goes
+  const amt = [ing.quantity_csilla, ing.unit].filter(Boolean).join(' ').toLowerCase();
+  if (/\b(full|all remaining|all of it|last|entire)\b/.test(amt)) return 0;
+
+  // Critical perishability → use it all
+  if (item.perishability_level === 'critical') return 0;
+
+  // Stable pantry staples (oils, spices, baking, seeds, cooking liquids) → skip
+  const skipSubs = new Set(['Oils', 'Spices', 'Baking', 'Seeds', 'Cooking Liquids']);
+  if (item.perishability_level === 'stable' && skipSubs.has(item.subcategory)) return -1;
+
+  // Alliums used in small amounts (not a whole bunch) → skip
+  if (item.subcategory === 'Alliums' && !/\bbunch\b/.test(amt)) return -1;
+
+  // Single whole item that clearly uses the full stock
+  if (/^1\s+(whole|eggplant|melon|pineapple)\b/i.test(amt)) return 0;
+
+  // Frozen proteins used as a full pack → all gone
+  if (item.storage_location === 'freezer' && /\b(full|1 pack|1 fish|thawed)\b/.test(amt)) return 0;
+
+  // Default: assume roughly a quarter was used, 75% remains
+  return 75;
+}
+
+// ─── Toggle cook panel open/closed ────────────────────────
+function toggleCookPanel(dayIdx, mealIdx) {
+  const cookKey = `${dayIdx}-${mealIdx}`;
+  if (_openCookKey === cookKey) {
+    // Close
+    _openCookKey    = null;
+    _cookSelections = {};
+  } else {
+    // Open — pre-fill smart defaults for all pantry-linked ingredients
+    _openCookKey    = cookKey;
+    _cookSelections = {};
+    const day  = _days[dayIdx];
+    const meal = day?.meals[mealIdx];
+    if (meal) {
+      for (const ing of meal.ingredients || []) {
+        if (ing.pantry_item_id && _pantryItems[ing.pantry_item_id]
+            && !_pantryItems[ing.pantry_item_id].used) {
+          _cookSelections[ing.pantry_item_id] = getDefaultRemaining(ing, _pantryItems[ing.pantry_item_id]);
+        }
+      }
+    }
+  }
+  renderDayView();
+}
+
+// ─── Confirm cook: apply deductions ───────────────────────
+function confirmCooked(dayIdx, mealIdx) {
+  const day  = _days[dayIdx];
+  const meal = day?.meals[mealIdx];
+  if (!meal) return;
+
+  // Build deductions array (one entry per panel row)
+  const deductions = (meal.ingredients || [])
+    .filter(i => i.pantry_item_id && _pantryItems[i.pantry_item_id])
+    .map(ing => {
+      const item = _pantryItems[ing.pantry_item_id];
+      // Default to smart default if chip was never touched
+      const appliedPct = _cookSelections[ing.pantry_item_id] !== undefined
+        ? _cookSelections[ing.pantry_item_id]
+        : (item.used ? -1 : getDefaultRemaining(ing, item));
+
+      return {
+        pantry_item_id: ing.pantry_item_id,
+        prev_used:      item.used              ?? false,
+        prev_partial:   item.partial_remaining ?? null,
+        applied_pct:    appliedPct,
+      };
+    })
+    .filter(d => d.pantry_item_id); // safety: skip nulls
+
+  // ── Optimistic: apply deductions locally ──────────────
+  const pantrySnapshot = {};
+  for (const d of deductions) {
+    pantrySnapshot[d.pantry_item_id] = { ...(_pantryItems[d.pantry_item_id] || {}) };
+    if (d.applied_pct === -1) continue;
+    const item = _pantryItems[d.pantry_item_id];
+    if (!item) continue;
+    if (d.applied_pct === 0) {
+      item.used              = true;
+      item.partial_remaining = null;
+    } else {
+      item.used              = false;
+      item.partial_remaining = d.applied_pct;
+    }
+  }
+
+  // Optimistic: flip meal state
+  const prevCooked    = meal.cooked;
+  const prevCookedDate = meal.cooked_date;
+  meal.cooked      = true;
+  meal.cooked_date = new Date().toISOString().slice(0, 10);
+
+  // Cache log for optimistic undo
+  _cookLog[meal.id] = deductions;
+
+  // Close panel
+  _openCookKey    = null;
+  _cookSelections = {};
+
+  renderDayNav();
+  renderDayView();
+  flashSaved();
+
+  // ── Persist to DB ─────────────────────────────────────
+  markMealCookedWithDeductions(meal.id, deductions).catch(err => {
+    console.error('confirmCooked failed:', err);
+    // Roll back
+    meal.cooked      = prevCooked;
+    meal.cooked_date = prevCookedDate;
+    delete _cookLog[meal.id];
+    for (const d of deductions) {
+      if (_pantryItems[d.pantry_item_id] && pantrySnapshot[d.pantry_item_id]) {
+        Object.assign(_pantryItems[d.pantry_item_id], pantrySnapshot[d.pantry_item_id]);
+      }
+    }
+    renderDayNav();
+    renderDayView();
+    alert(`⚠️ Couldn't save: ${err.message}`);
+  });
+}
+
+// ─── Undo cook ────────────────────────────────────────────
+function unmarkCooked(mealId) {
+  let meal = null;
+  for (const day of _days) {
+    meal = day.meals.find(m => m.id === mealId);
+    if (meal) break;
+  }
+  if (!meal) return;
+
+  // Optimistic: restore pantry from local log cache
+  const logDeductions = _cookLog[mealId] || [];
+  const pantrySnapshot = {};
+  for (const d of logDeductions) {
+    if (d.applied_pct === -1) continue;
+    const item = _pantryItems[d.pantry_item_id];
+    if (!item) continue;
+    pantrySnapshot[d.pantry_item_id] = { ...item };
+    item.used              = d.prev_used              ?? false;
+    item.partial_remaining = d.prev_partial           ?? null;
+  }
+
+  const prevCooked    = meal.cooked;
+  const prevCookedDate = meal.cooked_date;
+  meal.cooked      = false;
+  meal.cooked_date = null;
+  delete _cookLog[mealId];
+
+  renderDayNav();
+  renderDayView();
+  flashSaved();
+
+  // Persist to DB
+  unmarkMealCooked(mealId).catch(err => {
+    console.error('unmarkCooked failed:', err);
+    // Roll back
+    meal.cooked      = prevCooked;
+    meal.cooked_date = prevCookedDate;
+    _cookLog[mealId] = logDeductions;
+    for (const d of logDeductions) {
+      if (_pantryItems[d.pantry_item_id] && pantrySnapshot[d.pantry_item_id]) {
+        Object.assign(_pantryItems[d.pantry_item_id], pantrySnapshot[d.pantry_item_id]);
+      }
+    }
+    renderDayNav();
+    renderDayView();
+    alert(`⚠️ Couldn't save: ${err.message}`);
+  });
 }
 
 // ─── Recipe modal ─────────────────────────────────────────
@@ -270,18 +584,17 @@ function openModal(dayIdx, mealIdx) {
   const titleEl   = document.getElementById('modalTitle');
   const taglineEl = document.getElementById('modalTagline');
   const bodyEl    = document.getElementById('modalBody');
-
   if (!topEl) return;
 
-  topEl.style.background     = 'var(--accent)';
-  topEl.style.color          = 'white';
-  badgeEl.textContent        = TYPE_LABEL[typeKey] || typeKey;
-  badgeEl.className          = `meal-type-badge ${TYPE_CLASS[typeKey] || ''}`;
-  titleEl.textContent        = (meal.emoji || '') + ' ' + meal.name;
-  taglineEl.textContent      = meal.tagline || '';
+  topEl.style.background = 'var(--accent)';
+  topEl.style.color      = 'white';
+  badgeEl.textContent    = TYPE_LABEL[typeKey] || typeKey;
+  badgeEl.className      = `meal-type-badge ${TYPE_CLASS[typeKey] || ''}`;
+  titleEl.textContent    = (meal.emoji || '') + ' ' + meal.name;
+  taglineEl.textContent  = meal.tagline || '';
 
   const ingHtml = (meal.ingredients || []).map(i => {
-    const qty = i.quantity_csilla ? `${i.quantity_csilla}${i.unit ? ' ' + i.unit : ''}` : (i.amount || '');
+    const qty = i.quantity_csilla ? `${i.quantity_csilla}${i.unit ? ' ' + i.unit : ''}` : '';
     return `<li>
       <div class="ingredient-dot"></div>
       <span><strong>${escHtml(i.name)}</strong>${qty ? ` — ${escHtml(qty)}` : ''}</span>
@@ -345,26 +658,6 @@ function closeModal() {
   const overlay = document.getElementById('recipeModalOverlay');
   if (overlay) overlay.classList.remove('open');
   document.body.style.overflow = '';
-}
-
-// ─── Cooked toggle ────────────────────────────────────────
-async function toggleCooked(mealId) {
-  let meal = null;
-  for (const day of _days) {
-    meal = day.meals.find(m => m.id === mealId);
-    if (meal) break;
-  }
-  if (!meal) return;
-
-  const newCooked = !meal.cooked;
-  meal.cooked      = newCooked;
-  meal.cooked_date = newCooked ? new Date().toISOString().slice(0, 10) : null;
-
-  renderDayNav();
-  renderDayView();
-
-  await setMealCooked(mealId, newCooked);
-  flashSaved();
 }
 
 // ─── Helpers ──────────────────────────────────────────────

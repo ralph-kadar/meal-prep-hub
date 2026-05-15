@@ -89,14 +89,32 @@ export async function fetchActivePlan() {
   return { plan, days };
 }
 
-// ─── Mark meal cooked / uncooked ─────────────────────────
-export async function setMealCooked(mealId, cooked) {
-  const { error } = await db
-    .from('meals')
-    .update({
-      cooked,
-      cooked_date: cooked ? new Date().toISOString().slice(0, 10) : null
-    })
-    .eq('id', mealId);
+// ─── Mark meal cooked + apply pantry deductions (atomic) ──
+// deductions: [{pantry_item_id, prev_used, prev_partial, applied_pct}]
+// applied_pct: -1=skip, 0=all gone, 25|50|75=% remaining
+export async function markMealCookedWithDeductions(mealId, deductions) {
+  const { error } = await db.rpc('mark_meal_cooked', {
+    p_meal_id:    mealId,
+    p_deductions: deductions,
+  });
   if (error) throw error;
+}
+
+// ─── Undo cook: restore pantry from log, unmark meal ──────
+export async function unmarkMealCooked(mealId) {
+  const { error } = await db.rpc('unmark_meal_cooked', {
+    p_meal_id: mealId,
+  });
+  if (error) throw error;
+}
+
+// ─── Fetch cook log rows for a set of meal IDs ────────────
+export async function fetchCookLog(mealIds) {
+  if (!mealIds.length) return [];
+  const { data, error } = await db
+    .from('meal_cook_log')
+    .select('meal_id, deductions')
+    .in('meal_id', mealIds);
+  if (error) throw error;
+  return data;
 }
