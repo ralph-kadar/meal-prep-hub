@@ -1183,6 +1183,98 @@ button { cursor: pointer; font: inherit; }
 .footer-btn.delete { background: #fdf0ef; color: var(--red); }
 .footer-btn.delete:hover { background: #fadbd8; }
 
+/* ══ PLAN HISTORY & SWAP (P1-4) ══════════════════════════ */
+
+/* "📚 Past plans" button in Plan tab header */
+.past-plans-link {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-start;
+  transition: border-color 0.15s, color 0.15s;
+}
+.past-plans-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Read-only banner shown when viewing a past plan */
+.past-plan-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fef9e7;
+  border-bottom: 1px solid #f7dc6f;
+  padding: 10px 32px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #7d6608;
+}
+.back-active-btn {
+  background: none;
+  border: 1.5px solid #e2b94b;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #7d6608;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.back-active-btn:hover { background: #fef3c7; }
+
+/* Past-plan cards in the history overlay */
+.past-plan-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.past-plan-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(45,106,79,0.12);
+}
+.past-plan-card:last-child { margin-bottom: 0; }
+
+.past-plan-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+}
+.past-plan-focus {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.past-plan-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: right;
+  flex-shrink: 0;
+}
+.past-plan-arrow {
+  font-size: 1rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
 /* ══ RESPONSIVE ══════════════════════════════════════════ */
 @media (max-width: 640px) {
   .app-header,
@@ -1210,6 +1302,10 @@ button { cursor: pointer; font: inherit; }
   .item-modal { max-width: 100%; border-radius: 20px 20px 0 0; max-height: 92vh; }
   .add-item-bar { padding-left: 16px; padding-right: 16px; }
   .form-grid-2 { grid-template-columns: 1fr; }
+
+  /* Plan history + swap mobile */
+  .past-plan-banner { padding-left: 16px; padding-right: 16px; flex-wrap: wrap; gap: 8px; }
+  .past-plan-stats { flex-direction: row; gap: 8px; }
 
   /* Shop tab mobile */
   .shop-header,

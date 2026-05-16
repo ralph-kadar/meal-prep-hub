@@ -157,6 +157,65 @@ export async function fetchActivePlan() {
   return { plan, days };
 }
 
+// ─── Past meal plans ──────────────────────────────────────
+
+// List all inactive plans with nested day/meal data for stats in the history overlay.
+export async function fetchPastPlans() {
+  const { data, error } = await db
+    .from('meal_plans')
+    .select(`
+      id, week_label, week_focus, generated_at, created_at,
+      meal_days(id, meals(cooked))
+    `)
+    .eq('is_active', false)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+// Fetch any plan by ID (active or not) with full nested data — same shape as fetchActivePlan().
+export async function fetchPlanById(planId) {
+  const { data: plan, error: planErr } = await db
+    .from('meal_plans')
+    .select('*')
+    .eq('id', planId)
+    .single();
+  if (planErr) throw planErr;
+
+  const { data: days, error: daysErr } = await db
+    .from('meal_days')
+    .select('*')
+    .eq('meal_plan_id', plan.id)
+    .order('sort_order');
+  if (daysErr) throw daysErr;
+
+  const dayIds = days.map(d => d.id);
+  if (!dayIds.length) return { plan, days: [] };
+
+  const [mealsRes, priorityRes, ingredientsRes, stepsRes] = await Promise.all([
+    db.from('meals').select('*').in('meal_day_id', dayIds).order('sort_order'),
+    db.from('meal_priority').select('*').order('sort_order'),
+    db.from('meal_ingredients').select('*').order('sort_order'),
+    db.from('meal_steps').select('*').order('step_order'),
+  ]);
+
+  for (const r of [mealsRes, priorityRes, ingredientsRes, stepsRes]) {
+    if (r.error) throw r.error;
+  }
+
+  for (const meal of mealsRes.data) {
+    meal.priority    = priorityRes.data.filter(p => p.meal_id === meal.id);
+    meal.ingredients = ingredientsRes.data.filter(i => i.meal_id === meal.id);
+    meal.steps       = stepsRes.data.filter(s => s.meal_id === meal.id);
+  }
+
+  for (const day of days) {
+    day.meals = mealsRes.data.filter(m => m.meal_day_id === day.id);
+  }
+
+  return { plan, days };
+}
+
 // ─── Mark meal cooked + apply pantry deductions (atomic) ──
 // deductions: [{pantry_item_id, prev_used, prev_partial, applied_pct}]
 // applied_pct: -1=skip, 0=all gone, 25|50|75=% remaining

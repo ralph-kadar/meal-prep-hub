@@ -1,6 +1,7 @@
 // ─── Meal Plan Module ─────────────────────────────────────
-import { fetchActivePlan, fetchPantry, fetchCookLog,
-         markMealCookedWithDeductions, unmarkMealCooked } from './supabase.js';
+import { fetchActivePlan, fetchPlanById, fetchPastPlans,
+         fetchPantry, fetchCookLog,
+         markMealCookedWithDeductions, unmarkMealCooked }  from './supabase.js';
 import { RALPH_MULTIPLIERS, PROFILES }                    from './config.js';
 import { flashSaved, getDefaultRemaining }                  from './ui.js';
 
@@ -9,7 +10,8 @@ let _plan         = null;
 let _days         = [];
 let _activeDay    = 0;
 let _pantryItems  = {};   // { pantry_item_id → pantry_item row }
-let _cookLog      = {};   // { meal_id → deductions[] }   (local cache of meal_cook_log)
+let _cookLog      = {};   // { meal_id → deductions[] }
+let _readonly     = false; // true when viewing a past plan
 
 // Cook-panel state (only one panel open at a time)
 let _openCookKey    = null;   // "${dayIdx}-${mealIdx}" or null
@@ -30,21 +32,38 @@ const TYPE_CLASS = {
 };
 
 // ─── Load & render ────────────────────────────────────────
-export async function loadAndRenderPlan() {
-  const result = await fetchActivePlan();
-  _plan = result.plan;
-  _days = result.days;
+// options = { planId, readonly }
+//   planId  — UUID of a specific plan to load; omit for active plan.
+//   readonly — true when browsing history; suppresses cook/swap UI.
+export async function loadAndRenderPlan(options = {}) {
+  const { planId, readonly } = options;
+  _readonly  = !!readonly;
   _activeDay = 0;
 
-  // Fetch pantry items and cook log in parallel
-  const allMealIds = _days.flatMap(d => d.meals.map(m => m.id));
-  const [pantryData, logData] = await Promise.all([
-    fetchPantry(),
-    fetchCookLog(allMealIds),
-  ]);
+  // Reset cook-panel state whenever the plan reloads
+  _openCookKey    = null;
+  _cookSelections = {};
 
-  _pantryItems = Object.fromEntries(pantryData.map(p => [p.id, p]));
-  _cookLog     = Object.fromEntries(logData.map(l => [l.meal_id, l.deductions]));
+  const result = planId
+    ? await fetchPlanById(planId)
+    : await fetchActivePlan();
+
+  _plan = result.plan;
+  _days = result.days;
+
+  if (_readonly) {
+    // Past plan view: no cook panel, so skip pantry + cook-log fetches.
+    _pantryItems = {};
+    _cookLog     = {};
+  } else {
+    const allMealIds = _days.flatMap(d => d.meals.map(m => m.id));
+    const [pantryData, logData] = await Promise.all([
+      fetchPantry(),
+      fetchCookLog(allMealIds),
+    ]);
+    _pantryItems = Object.fromEntries(pantryData.map(p => [p.id, p]));
+    _cookLog     = Object.fromEntries(logData.map(l => [l.meal_id, l.deductions]));
+  }
 
   renderShell();
   bindEvents();
@@ -66,11 +85,19 @@ function renderShell() {
   const csilla = PROFILES.csilla;
 
   container.innerHTML = `
+    ${_readonly ? `
+      <div class="past-plan-banner">
+        <span>📚 Viewing past plan</span>
+        <button class="back-active-btn" data-action="back-to-active">← Back to active plan</button>
+      </div>
+    ` : ''}
+
     <div class="meal-page-header">
       <div>
         <h2>🗓️ ${escHtml(_plan.week_label || '5-Day Meal Plan')}</h2>
         <p>${escHtml(_plan.week_focus || 'Prioritising what expires first · Tailored for Ralph & Csilla')}</p>
       </div>
+      ${_readonly ? '' : `<button class="past-plans-link" data-action="open-past-plans">📚 Past plans</button>`}
     </div>
 
     <div class="caloric-guide">
@@ -111,6 +138,9 @@ function renderShell() {
     `;
     document.body.appendChild(overlay);
   }
+
+  // Ensure past-plans overlay is in the DOM (binds once)
+  setupPastPlansOverlay();
 }
 
 // ─── Event delegation ─────────────────────────────────────
@@ -118,7 +148,14 @@ function bindEvents() {
   const container = document.getElementById('tab-plan');
   if (!container) return;
 
-  container.addEventListener('click', e => {
+  // Remove old listeners by replacing the node's clone — simplest approach
+  // for a module that may re-render without full remount.
+  // We use a single named handler stored on the container so we can remove it.
+  if (container._planHandler) {
+    container.removeEventListener('click', container._planHandler);
+  }
+
+  container._planHandler = e => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
 
@@ -132,7 +169,7 @@ function bindEvents() {
       }
 
       case 'open-modal': {
-        // Don't open modal when click came from the cook area
+        // Don't open modal when click came from cook area
         if (e.target.closest('.cook-btn-wrap, .cook-panel')) break;
         openModal(
           parseInt(target.dataset.dayIdx,  10),
@@ -155,10 +192,7 @@ function bindEvents() {
         const itemId = target.dataset.itemId;
         const pct    = parseInt(target.dataset.pct, 10);
         _cookSelections[itemId] = pct;
-        // DOM-only chip highlight — no re-render.
-        // Was: getElementById(`csel-${CSS.escape(itemId)}`) — wrong API pair:
-        // getElementById takes a literal string and doesn't process CSS escapes,
-        // so numeric IDs like "001" were never found. Using closest() instead.
+        // Walk up from the clicked chip — getElementById with CSS.escape is wrong here.
         const row = target.closest('.cook-sel');
         if (row) {
           row.querySelectorAll('button').forEach(b =>
@@ -184,17 +218,34 @@ function bindEvents() {
       }
 
       case 'panel-noop':
-        // Absorb click so it doesn't bubble to open-modal
         break;
-    }
-  });
 
-  // Close modal on overlay click or Escape
+      // ── Phase A: Plan history ──────────────────────────
+      case 'open-past-plans': {
+        openPastPlansOverlay();
+        break;
+      }
+
+      case 'back-to-active': {
+        loadAndRenderPlan(); // reload active plan, clears _readonly
+        break;
+      }
+
+    }
+  };
+
+  container.addEventListener('click', container._planHandler);
+
+  // Close recipe modal on overlay click or Escape
   document.addEventListener('click', e => {
     if (e.target.closest('[data-action="close-modal"]')) closeModal();
   });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') {
+      closeModal();
+      closePastPlansOverlay();
+      closePlanActionModal();
+    }
   });
 }
 
@@ -306,6 +357,9 @@ function renderMealCard(meal, dayIdx, mealIdx) {
 
 // ─── Cook area (bottom of meal card) ─────────────────────
 function cookAreaHtml(meal, dayIdx, mealIdx) {
+  // No cook UI in readonly mode (past plan view)
+  if (_readonly) return '';
+
   // Already cooked → show stamp with undo
   if (meal.cooked) {
     return `
@@ -334,16 +388,12 @@ function cookAreaHtml(meal, dayIdx, mealIdx) {
 
 // ─── Cook panel HTML ──────────────────────────────────────
 function buildCookPanelHtml(meal, dayIdx, mealIdx) {
-  const cookKey = `${dayIdx}-${mealIdx}`;
-
-  // Ingredients that have a pantry link and aren't already fully used
   const panelRows = (meal.ingredients || [])
     .filter(i => i.pantry_item_id && _pantryItems[i.pantry_item_id] && !_pantryItems[i.pantry_item_id].used)
     .map(ing => {
-      const item  = _pantryItems[ing.pantry_item_id];
+      const item   = _pantryItems[ing.pantry_item_id];
       const amtStr = [ing.quantity_csilla, ing.unit].filter(Boolean).join(' ');
-      // Resolve selection: explicit chip choice, or smart default
-      const sel = _cookSelections[ing.pantry_item_id] !== undefined
+      const sel    = _cookSelections[ing.pantry_item_id] !== undefined
         ? _cookSelections[ing.pantry_item_id]
         : getDefaultRemaining(ing, item);
 
@@ -395,11 +445,9 @@ function buildCookPanelHtml(meal, dayIdx, mealIdx) {
 function toggleCookPanel(dayIdx, mealIdx) {
   const cookKey = `${dayIdx}-${mealIdx}`;
   if (_openCookKey === cookKey) {
-    // Close
     _openCookKey    = null;
     _cookSelections = {};
   } else {
-    // Open — pre-fill smart defaults for all pantry-linked ingredients
     _openCookKey    = cookKey;
     _cookSelections = {};
     const day  = _days[dayIdx];
@@ -422,12 +470,10 @@ function confirmCooked(dayIdx, mealIdx) {
   const meal = day?.meals[mealIdx];
   if (!meal) return;
 
-  // Build deductions array (one entry per panel row)
   const deductions = (meal.ingredients || [])
     .filter(i => i.pantry_item_id && _pantryItems[i.pantry_item_id])
     .map(ing => {
       const item = _pantryItems[ing.pantry_item_id];
-      // Default to smart default if chip was never touched
       const appliedPct = _cookSelections[ing.pantry_item_id] !== undefined
         ? _cookSelections[ing.pantry_item_id]
         : (item.used ? -1 : getDefaultRemaining(ing, item));
@@ -439,7 +485,7 @@ function confirmCooked(dayIdx, mealIdx) {
         applied_pct:    appliedPct,
       };
     })
-    .filter(d => d.pantry_item_id); // safety: skip nulls
+    .filter(d => d.pantry_item_id);
 
   // ── Optimistic: apply deductions locally ──────────────
   const pantrySnapshot = {};
@@ -457,16 +503,12 @@ function confirmCooked(dayIdx, mealIdx) {
     }
   }
 
-  // Optimistic: flip meal state
-  const prevCooked    = meal.cooked;
+  const prevCooked     = meal.cooked;
   const prevCookedDate = meal.cooked_date;
   meal.cooked      = true;
   meal.cooked_date = new Date().toISOString().slice(0, 10);
 
-  // Cache log for optimistic undo
   _cookLog[meal.id] = deductions;
-
-  // Close panel
   _openCookKey    = null;
   _cookSelections = {};
 
@@ -474,10 +516,8 @@ function confirmCooked(dayIdx, mealIdx) {
   renderDayView();
   flashSaved();
 
-  // ── Persist to DB ─────────────────────────────────────
   markMealCookedWithDeductions(meal.id, deductions).catch(err => {
     console.error('confirmCooked failed:', err);
-    // Roll back
     meal.cooked      = prevCooked;
     meal.cooked_date = prevCookedDate;
     delete _cookLog[meal.id];
@@ -501,7 +541,6 @@ function unmarkCooked(mealId) {
   }
   if (!meal) return;
 
-  // Optimistic: restore pantry from local log cache
   const logDeductions = _cookLog[mealId] || [];
   const pantrySnapshot = {};
   for (const d of logDeductions) {
@@ -509,11 +548,11 @@ function unmarkCooked(mealId) {
     const item = _pantryItems[d.pantry_item_id];
     if (!item) continue;
     pantrySnapshot[d.pantry_item_id] = { ...item };
-    item.used              = d.prev_used              ?? false;
-    item.partial_remaining = d.prev_partial           ?? null;
+    item.used              = d.prev_used    ?? false;
+    item.partial_remaining = d.prev_partial ?? null;
   }
 
-  const prevCooked    = meal.cooked;
+  const prevCooked     = meal.cooked;
   const prevCookedDate = meal.cooked_date;
   meal.cooked      = false;
   meal.cooked_date = null;
@@ -523,10 +562,8 @@ function unmarkCooked(mealId) {
   renderDayView();
   flashSaved();
 
-  // Persist to DB
   unmarkMealCooked(mealId).catch(err => {
     console.error('unmarkCooked failed:', err);
-    // Roll back
     meal.cooked      = prevCooked;
     meal.cooked_date = prevCookedDate;
     _cookLog[mealId] = logDeductions;
@@ -629,6 +666,92 @@ function openModal(dayIdx, mealIdx) {
 
 function closeModal() {
   const overlay = document.getElementById('recipeModalOverlay');
+  if (overlay) overlay.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+// ══════════════════════════════════════════════════════════
+//  PHASE A — PLAN HISTORY
+// ══════════════════════════════════════════════════════════
+
+// ─── Past-plans overlay setup (called once from renderShell) ──
+function setupPastPlansOverlay() {
+  if (document.getElementById('planHistoryOverlay')) return;
+
+  const el = document.createElement('div');
+  el.id        = 'planHistoryOverlay';
+  el.className = 'item-modal-overlay';
+  document.body.appendChild(el);
+
+  el.addEventListener('click', e => {
+    if (e.target === el) { closePastPlansOverlay(); return; }
+    const target = e.target.closest('[data-action]');
+    if (!target) return;
+    const { action, planId } = target.dataset;
+    if (action === 'close-past-plans') { closePastPlansOverlay(); }
+    if (action === 'view-past-plan') {
+      closePastPlansOverlay();
+      loadAndRenderPlan({ planId, readonly: true });
+    }
+  });
+}
+
+async function openPastPlansOverlay() {
+  const overlay = document.getElementById('planHistoryOverlay');
+  if (!overlay) return;
+
+  overlay.innerHTML = `
+    <div class="item-modal" style="max-width:520px">
+      <div class="item-modal-header">
+        <span class="item-modal-title">📚 Past plans</span>
+        <button class="close-btn" data-action="close-past-plans">✕</button>
+      </div>
+      <div class="item-modal-body" id="planHistoryBody">
+        <p class="loading-state">Loading…</p>
+      </div>
+    </div>`;
+
+  overlay.classList.add('open');
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const plans = await fetchPastPlans();
+    const body  = document.getElementById('planHistoryBody');
+    if (!body) return;
+
+    if (!plans.length) {
+      body.innerHTML = `<p class="empty-state">No past plans yet. Plans appear here once a new week's plan is activated.</p>`;
+      return;
+    }
+
+    body.innerHTML = plans.map(p => {
+      const allMeals    = (p.meal_days || []).flatMap(d => d.meals || []);
+      const totalMeals  = allMeals.length;
+      const cookedMeals = allMeals.filter(m => m.cooked).length;
+      const totalDays   = (p.meal_days || []).length;
+      const cookedDays  = (p.meal_days || []).filter(d =>
+        (d.meals || []).some(m => m.cooked)
+      ).length;
+
+      return `
+        <div class="past-plan-card" data-action="view-past-plan" data-plan-id="${p.id}">
+          <div class="past-plan-label">${escHtml(p.week_label || 'Untitled plan')}</div>
+          ${p.week_focus ? `<div class="past-plan-focus">${escHtml(p.week_focus)}</div>` : ''}
+          <div class="past-plan-stats">
+            <span>🍽️ ${cookedMeals}/${totalMeals} meals cooked</span>
+            <span>📅 ${cookedDays}/${totalDays} days</span>
+          </div>
+          <div class="past-plan-arrow">→</div>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    const body = document.getElementById('planHistoryBody');
+    if (body) body.innerHTML = `<p class="error-state">⚠️ Failed to load — ${escHtml(err.message)}</p>`;
+  }
+}
+
+function closePastPlansOverlay() {
+  const overlay = document.getElementById('planHistoryOverlay');
   if (overlay) overlay.classList.remove('open');
   document.body.style.overflow = '';
 }
