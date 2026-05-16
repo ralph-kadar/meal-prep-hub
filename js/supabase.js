@@ -216,6 +216,15 @@ export async function fetchPlanById(planId) {
   return { plan, days };
 }
 
+// Replace a meal atomically via the replace_meal Postgres function (Phase B).
+export async function replaceMealRpc(mealId, payload) {
+  const { error } = await db.rpc('replace_meal', {
+    p_meal_id: mealId,
+    p_payload: payload,
+  });
+  if (error) throw error;
+}
+
 // ─── Mark meal cooked + apply pantry deductions (atomic) ──
 // deductions: [{pantry_item_id, prev_used, prev_partial, applied_pct}]
 // applied_pct: -1=skip, 0=all gone, 25|50|75=% remaining

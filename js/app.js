@@ -67,6 +67,19 @@ function showApp(user) {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
+  // Auto-refresh the Plan tab when the user returns from Cowork-Opus
+  // (after pasting a swap prompt — Opus writes to DB, user tabs back).
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && _loaded.plan) {
+      // Only re-load if the plan tab is the active tab right now.
+      const planBtn = app.querySelector('[data-tab="plan"]');
+      if (planBtn && planBtn.classList.contains('active')) {
+        _loaded.plan = false;
+        loadTab('plan');
+      }
+    }
+  });
+
   loadTab('pantry');
 }
 

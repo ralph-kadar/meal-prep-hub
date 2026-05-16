@@ -1,7 +1,8 @@
 // ─── Meal Plan Module ─────────────────────────────────────
 import { fetchActivePlan, fetchPlanById, fetchPastPlans,
          fetchPantry, fetchCookLog,
-         markMealCookedWithDeductions, unmarkMealCooked }  from './supabase.js';
+         markMealCookedWithDeductions, unmarkMealCooked,
+         replaceMealRpc }                                   from './supabase.js';
 import { RALPH_MULTIPLIERS, PROFILES }                    from './config.js';
 import { flashSaved, getDefaultRemaining }                  from './ui.js';
 
@@ -141,6 +142,8 @@ function renderShell() {
 
   // Ensure past-plans overlay is in the DOM (binds once)
   setupPastPlansOverlay();
+  // Ensure plan-action overlay is in the DOM (for swap modal)
+  setupPlanActionOverlay();
 }
 
 // ─── Event delegation ─────────────────────────────────────
@@ -169,8 +172,8 @@ function bindEvents() {
       }
 
       case 'open-modal': {
-        // Don't open modal when click came from cook area
-        if (e.target.closest('.cook-btn-wrap, .cook-panel')) break;
+        // Don't open modal when click came from cook area or swap button
+        if (e.target.closest('.cook-btn-wrap, .cook-panel, .swap-meal-btn')) break;
         openModal(
           parseInt(target.dataset.dayIdx,  10),
           parseInt(target.dataset.mealIdx, 10)
@@ -231,6 +234,26 @@ function bindEvents() {
         break;
       }
 
+      // ── Phase B: Swap-meal ─────────────────────────────
+      case 'open-swap': {
+        e.stopPropagation();
+        openSwapFlow(
+          parseInt(target.dataset.dayIdx,  10),
+          parseInt(target.dataset.mealIdx, 10)
+        );
+        break;
+      }
+
+      case 'plan-refresh': {
+        closePlanActionModal();
+        loadAndRenderPlan();
+        break;
+      }
+
+      case 'close-plan-modal': {
+        closePlanActionModal();
+        break;
+      }
     }
   };
 
@@ -320,6 +343,13 @@ function renderMealCard(meal, dayIdx, mealIdx) {
     .map(p => `<span class="priority-tag${p.urgent ? ' urgent' : ''}">${p.urgent ? '⚡ ' : ''}${escHtml(p.label)}</span>`)
     .join('');
 
+  // Swap button: only on active (non-readonly), non-cooked meals
+  const swapBtn = (!_readonly && !cooked)
+    ? `<button class="swap-meal-btn" data-action="open-swap"
+               data-day-idx="${dayIdx}" data-meal-idx="${mealIdx}"
+               title="Swap this meal with Opus">🔄</button>`
+    : '';
+
   return `
     <div class="meal-card${cooked ? ' meal-card--cooked' : ''}"
          data-action="open-modal" data-day-idx="${dayIdx}" data-meal-idx="${mealIdx}"
@@ -331,6 +361,7 @@ function renderMealCard(meal, dayIdx, mealIdx) {
           <div class="meal-name">${escHtml(meal.name)}</div>
           ${meal.tagline ? `<div class="meal-tagline">${escHtml(meal.tagline)}</div>` : ''}
         </div>
+        ${swapBtn}
       </div>
       ${priorityTags ? `<div class="priority-tags">${priorityTags}</div>` : ''}
       <div class="macro-table">
@@ -754,6 +785,247 @@ function closePastPlansOverlay() {
   const overlay = document.getElementById('planHistoryOverlay');
   if (overlay) overlay.classList.remove('open');
   document.body.style.overflow = '';
+}
+
+// ══════════════════════════════════════════════════════════
+//  PHASE B — SWAP-MEAL VIA OPUS + MCP
+// ══════════════════════════════════════════════════════════
+
+// ─── Plan-action modal (for swap prompt + refresh confirmation) ──
+function setupPlanActionOverlay() {
+  if (document.getElementById('planActionOverlay')) return;
+
+  const el = document.createElement('div');
+  el.id        = 'planActionOverlay';
+  el.className = 'item-modal-overlay';
+  document.body.appendChild(el);
+
+  el.addEventListener('click', e => {
+    if (e.target === el) { closePlanActionModal(); return; }
+  });
+}
+
+function showPlanActionModal(title, body, buttons) {
+  const overlay = document.getElementById('planActionOverlay');
+  if (!overlay) return;
+
+  overlay.innerHTML = `
+    <div class="confirm-modal">
+      <h3>${escHtml(title)}</h3>
+      <p>${escHtml(body).replace(/\n/g, '<br>')}</p>
+      <div class="confirm-modal-btns">
+        ${buttons.map(b => `
+          <button class="footer-btn ${b.primary ? 'save' : 'cancel'}"
+                  data-action="${b.action}">${escHtml(b.label)}</button>
+        `).join('')}
+      </div>
+    </div>`;
+
+  overlay.classList.add('open');
+}
+
+function showPlanActionFallback(prompt) {
+  showPlanActionModal(
+    '🔄 Clipboard blocked',
+    'Copy the prompt below, paste into Cowork-Opus, then hit Refresh.',
+    [{ label: 'Close', action: 'close-plan-modal' }]
+  );
+  const modal = document.querySelector('#planActionOverlay .confirm-modal');
+  if (modal) {
+    const ta = document.createElement('textarea');
+    ta.value         = prompt;
+    ta.rows          = 10;
+    ta.style.cssText = 'width:100%;font-size:0.78rem;margin-bottom:12px;border:1.5px solid var(--border);border-radius:8px;padding:8px;resize:vertical;';
+    modal.insertBefore(ta, modal.querySelector('.confirm-modal-btns'));
+    ta.focus(); ta.select();
+  }
+}
+
+function closePlanActionModal() {
+  const overlay = document.getElementById('planActionOverlay');
+  if (overlay) overlay.classList.remove('open');
+}
+
+// ─── Swap flow ────────────────────────────────────────────
+async function openSwapFlow(dayIdx, mealIdx) {
+  const day  = _days[dayIdx];
+  const meal = day?.meals[mealIdx];
+  if (!meal) return;
+
+  // Visual feedback on the swap button
+  const swapBtn = document.querySelector(
+    `[data-action="open-swap"][data-day-idx="${dayIdx}"][data-meal-idx="${mealIdx}"]`
+  );
+  if (swapBtn) { swapBtn.disabled = true; swapBtn.textContent = '⏳'; }
+
+  try {
+    const prompt = await buildSwapPrompt(dayIdx, mealIdx);
+
+    await navigator.clipboard.writeText(prompt).catch(() => {
+      showPlanActionFallback(prompt);
+      return;
+    });
+
+    showPlanActionModal(
+      '🔄 Swap prompt copied!',
+      `Paste into Cowork-Opus for "${escHtml(meal.name)}".\n\nOpus will call replace_meal() via Supabase MCP and swap the meal directly. When done, hit "Refresh plan" to see the new meal.`,
+      [
+        { label: '↻ Refresh plan', action: 'plan-refresh',    primary: true },
+        { label: 'Close',          action: 'close-plan-modal'               },
+      ]
+    );
+  } catch (err) {
+    console.error('openSwapFlow failed:', err);
+    alert('Failed to build swap prompt: ' + (err.message || 'Unknown error'));
+  } finally {
+    if (swapBtn) { swapBtn.disabled = false; swapBtn.textContent = '🔄'; }
+  }
+}
+
+async function buildSwapPrompt(dayIdx, mealIdx) {
+  const day  = _days[dayIdx];
+  const meal = day?.meals[mealIdx];
+  if (!meal) throw new Error('Meal not found');
+
+  // Urgent pantry items (critical-perishability or ≤25% remaining)
+  const urgentItems = Object.values(_pantryItems)
+    .filter(i => !i.used && (
+      i.perishability_level === 'critical' ||
+      ((i.partial_remaining ?? 100) <= 25)
+    ))
+    .map(i => ({
+      id:                  i.id,
+      name:                i.name,
+      category:            i.category,
+      perishability_level: i.perishability_level,
+      partial_remaining:   i.partial_remaining ?? 100,
+      expiry_date:         i.expiry_date,
+    }));
+
+  // Ingredients in OTHER meals this week (help Opus avoid repeats)
+  const otherIngredients = new Set();
+  for (const d of _days) {
+    for (const m of (d.meals || [])) {
+      if (m.id === meal.id) continue;
+      for (const ing of (m.ingredients || [])) {
+        otherIngredients.add(ing.name.toLowerCase());
+      }
+    }
+  }
+
+  // Active pantry snapshot (non-used items)
+  const pantrySnapshot = Object.values(_pantryItems)
+    .filter(i => !i.used)
+    .map(i => ({
+      id:                  i.id,
+      name:                i.name,
+      category:            i.category,
+      subcategory:         i.subcategory,
+      perishability_level: i.perishability_level,
+      partial_remaining:   i.partial_remaining ?? 100,
+      expiry_date:         i.expiry_date,
+      tags:                i.tags,
+    }));
+
+  // Other meals in the same plan (context for variety)
+  const planContext = _days.flatMap(d =>
+    (d.meals || [])
+      .filter(m => m.id !== meal.id)
+      .map(m => ({
+        day:       d.day_label,
+        meal_type: m.meal_type,
+        name:      m.name,
+        cooked:    m.cooked,
+      }))
+  );
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  return `You're helping Ralph & Csilla swap one meal in their active weekly plan.
+Goal: replace only this slot while maintaining variety + longevity-focused
+eating (30+ distinct plants/week, omega-3 rotation, cruciferous/leafy/legume
+variety, minimal ultra-processed).
+
+TODAY: ${today}
+
+── MEAL TO REPLACE ─────────────────────────────────────────
+Meal ID (use this exactly): ${meal.id}
+Day: ${day.day_label}${day.date ? ' (' + day.date + ')' : ''}
+Type: ${meal.meal_type}
+Current name: ${meal.name}
+Current tagline: ${meal.tagline || ''}
+Current ingredients: ${(meal.ingredients || []).map(i => i.name).join(', ')}
+
+── URGENT PANTRY ITEMS (prioritise these) ──────────────────
+${urgentItems.length
+  ? JSON.stringify(urgentItems, null, 2)
+  : 'None currently urgent.'}
+
+── AVOID (already in other meals this week) ────────────────
+${[...otherIngredients].slice(0, 25).join(', ') || 'none'}
+
+── OTHER MEALS THIS WEEK (context for variety) ─────────────
+${JSON.stringify(planContext, null, 2)}
+
+── ACTIVE PANTRY SNAPSHOT ──────────────────────────────────
+${JSON.stringify(pantrySnapshot, null, 2)}
+
+── PROFILES ────────────────────────────────────────────────
+Ralph: 30y 180cm 85kg · 2300 kcal/day · 140g protein
+Csilla: 29y 156cm 56kg · 1750 kcal/day · 95g protein
+(Macros below are per Csilla's serving; Ralph +25–30% on grains & protein)
+
+── INSTRUCTIONS ────────────────────────────────────────────
+Design a replacement ${meal.meal_type} that:
+1. Uses at least one urgent pantry item if possible.
+2. Doesn't repeat ingredients already in this week's plan.
+3. Fits longevity/variety goals.
+4. Has realistic per-Csilla-serving macros (kcal, protein g, carbs g, fat g).
+5. Includes 4–6 clear cooking steps.
+6. Includes 1–3 priority chips (key ingredients / urgent items).
+
+Then write it to the database via Supabase MCP
+(project: uonfyoyzdmzuqremlqgs) by calling replace_meal:
+
+  SELECT replace_meal(
+    '${meal.id}'::uuid,
+    $payload$
+    {
+      "name": "New Meal Name",
+      "emoji": "🍽️",
+      "tagline": "Short tagline ≤ 60 chars",
+      "kcal_csilla": 450,
+      "protein_csilla": 28,
+      "carbs_csilla": 45,
+      "fat_csilla": 14,
+      "tip": "Optional nutrition tip",
+      "ingredients": [
+        {
+          "pantry_item_id": "exact-pantry-id-or-null",
+          "name": "Ingredient name",
+          "quantity_csilla": "200",
+          "unit": "g",
+          "is_pantry_staple": false,
+          "urgent": false
+        }
+      ],
+      "steps": [
+        { "step_order": 1, "instruction": "Step 1 text" },
+        { "step_order": 2, "instruction": "Step 2 text" }
+      ],
+      "priority": [
+        { "label": "Key ingredient", "urgent": false }
+      ]
+    }
+    $payload$::jsonb
+  );
+
+Use pantry IDs from the snapshot above when ingredients match. Set
+pantry_item_id to null for staples not tracked individually (salt, pepper, etc).
+Set urgent: true on priority chips for items that need to be used first.
+
+Reply in chat with: new meal name, key ingredients, and how it uses the
+urgent items (or why none were suitable for this slot).`;
 }
 
 // ─── Helpers ──────────────────────────────────────────────

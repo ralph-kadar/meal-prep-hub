@@ -1275,6 +1275,26 @@ button { cursor: pointer; font: inherit; }
   flex-shrink: 0;
 }
 
+/* Swap button on each non-cooked meal card */
+.swap-meal-btn {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  flex-shrink: 0;
+  align-self: flex-start;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  min-height: 32px;
+}
+.swap-meal-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+.swap-meal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ══ RESPONSIVE ══════════════════════════════════════════ */
 @media (max-width: 640px) {
   .app-header,
