@@ -86,10 +86,12 @@ CREATE TABLE IF NOT EXISTS meals (
   emoji           TEXT,
   name            TEXT NOT NULL,
   tagline         TEXT,
-  kcal_csilla     INTEGER,         -- Csilla's serving
-  protein_csilla  INTEGER,
-  carbs_csilla    INTEGER,
-  fat_csilla      INTEGER,
+  kcal_total      INTEGER,         -- batch total (both plates combined)
+  protein_total   INTEGER,
+  carbs_total     INTEGER,
+  fat_total       INTEGER,
+  ralph_portion   DECIMAL(3,2) DEFAULT 0.60, -- Ralph's share (0.60 = 60%)
+  serves          INTEGER DEFAULT 2,
   tip             TEXT,
   sort_order      INTEGER NOT NULL, -- 0=breakfast … 3=snack
   cooked          BOOLEAN DEFAULT FALSE,
@@ -118,7 +120,7 @@ CREATE TABLE IF NOT EXISTS meal_ingredients (
   meal_id          UUID NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
   pantry_item_id   TEXT REFERENCES pantry_items(id),
   name             TEXT NOT NULL,
-  quantity_csilla  TEXT,           -- Csilla's serving amount (e.g. "200", "1 tbsp")
+  quantity_total   TEXT,           -- batch total amount (e.g. "350", "1 tbsp")
   unit             TEXT,           -- separate unit (e.g. "g", "ml")
   is_pantry_staple BOOLEAN DEFAULT FALSE,
   urgent           BOOLEAN DEFAULT FALSE,
