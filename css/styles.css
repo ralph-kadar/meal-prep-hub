@@ -476,9 +476,21 @@ button { cursor: pointer; font: inherit; }
 
 /* Macro table */
 .macro-table { width: 100%; border-top: 1px solid var(--border); }
+
+/* Batch summary line: "🍽️ Serves 2 · 1538 kcal total · split 60/40" */
+.macro-batch-summary {
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding: 5px 10px 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.macro-batch-summary strong { color: var(--text); font-weight: 700; }
+
 .macro-row   { display: flex; align-items: center; padding: 5px 10px; gap: 2px; }
 .macro-row + .macro-row { border-top: 1px solid var(--border); }
 .macro-person { font-size: 0.66rem; font-weight: 700; width: 58px; flex-shrink: 0; color: var(--muted); }
+.macro-person.ralph { color: #084298; }
 .macro-cell   { flex: 1; text-align: center; font-weight: 700; font-size: 0.82rem; }
 .macro-cell span { font-size: 0.6rem; font-weight: 400; }
 
@@ -654,6 +666,16 @@ button { cursor: pointer; font: inherit; }
 }
 .close-btn:hover { background: rgba(255,255,255,0.35); }
 .modal-body { padding: 24px 28px 28px; }
+
+/* Batch summary above the two-person macro grid in the recipe modal */
+.modal-batch-summary {
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 10px 16px 6px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-batch-summary strong { color: var(--text); font-weight: 700; }
 
 .modal-macro-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
 .modal-person-block { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }

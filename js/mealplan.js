@@ -363,19 +363,24 @@ function renderMealCard(meal, dayIdx, mealIdx) {
       </div>
       ${priorityTags ? `<div class="priority-tags">${priorityTags}</div>` : ''}
       <div class="macro-table">
+        <div class="macro-batch-summary">
+          🍽️ Serves ${meal.serves ?? 2} &nbsp;·&nbsp;
+          <strong>${meal.kcal_total ?? 0}</strong> kcal total &nbsp;·&nbsp;
+          ${splitLabel(meal.ralph_portion)}
+        </div>
+        <div class="macro-row">
+          <div class="macro-person ralph">🧑 Ralph</div>
+          <div class="macro-cell" style="color:var(--accent)">${rm.kcal}<span> kcal</span></div>
+          <div class="macro-cell" style="color:#c0392b">${rm.protein}g<span> P</span></div>
+          <div class="macro-cell" style="color:#e67e22">${rm.carbs}g<span> C</span></div>
+          <div class="macro-cell" style="color:#2980b9">${rm.fat}g<span> F</span></div>
+        </div>
         <div class="macro-row">
           <div class="macro-person">👩 Csilla</div>
           <div class="macro-cell" style="color:var(--accent)">${cm.kcal}<span> kcal</span></div>
           <div class="macro-cell" style="color:#c0392b">${cm.protein}g<span> P</span></div>
           <div class="macro-cell" style="color:#e67e22">${cm.carbs}g<span> C</span></div>
           <div class="macro-cell" style="color:#2980b9">${cm.fat}g<span> F</span></div>
-        </div>
-        <div class="macro-row">
-          <div class="macro-person">🧑 Ralph</div>
-          <div class="macro-cell" style="color:var(--accent)">${rm.kcal}<span> kcal</span></div>
-          <div class="macro-cell" style="color:#c0392b">${rm.protein}g<span> P</span></div>
-          <div class="macro-cell" style="color:#e67e22">${rm.carbs}g<span> C</span></div>
-          <div class="macro-cell" style="color:#2980b9">${rm.fat}g<span> F</span></div>
         </div>
       </div>
       <div class="expand-hint">Tap to see recipe &amp; steps →</div>
@@ -648,16 +653,12 @@ function openModal(dayIdx, mealIdx) {
   const ralph  = PROFILES.ralph;
 
   bodyEl.innerHTML = `
+    <div class="modal-batch-summary">
+      🍽️ Serves ${meal.serves ?? 2} &nbsp;·&nbsp;
+      <strong>${meal.kcal_total ?? 0}</strong> kcal total &nbsp;·&nbsp;
+      ${splitLabel(meal.ralph_portion)}
+    </div>
     <div class="modal-macro-grid">
-      <div class="modal-person-block">
-        <div class="modal-person-label csilla">👩 Csilla · ~${csilla.kcal.toLocaleString()} kcal/day</div>
-        <div class="modal-person-macros">
-          <div class="modal-pm kcal"><span class="mv">${cm.kcal}</span><span class="ml">Calories</span></div>
-          <div class="modal-pm protein"><span class="mv">${cm.protein}g</span><span class="ml">Protein</span></div>
-          <div class="modal-pm carbs"><span class="mv">${cm.carbs}g</span><span class="ml">Carbs</span></div>
-          <div class="modal-pm fat"><span class="mv">${cm.fat}g</span><span class="ml">Fat</span></div>
-        </div>
-      </div>
       <div class="modal-person-block">
         <div class="modal-person-label ralph">🧑 Ralph · ~${ralph.kcal.toLocaleString()} kcal/day</div>
         <div class="modal-person-macros">
@@ -665,6 +666,15 @@ function openModal(dayIdx, mealIdx) {
           <div class="modal-pm protein"><span class="mv">${rm.protein}g</span><span class="ml">Protein</span></div>
           <div class="modal-pm carbs"><span class="mv">${rm.carbs}g</span><span class="ml">Carbs</span></div>
           <div class="modal-pm fat"><span class="mv">${rm.fat}g</span><span class="ml">Fat</span></div>
+        </div>
+      </div>
+      <div class="modal-person-block">
+        <div class="modal-person-label csilla">👩 Csilla · ~${csilla.kcal.toLocaleString()} kcal/day</div>
+        <div class="modal-person-macros">
+          <div class="modal-pm kcal"><span class="mv">${cm.kcal}</span><span class="ml">Calories</span></div>
+          <div class="modal-pm protein"><span class="mv">${cm.protein}g</span><span class="ml">Protein</span></div>
+          <div class="modal-pm carbs"><span class="mv">${cm.carbs}g</span><span class="ml">Carbs</span></div>
+          <div class="modal-pm fat"><span class="mv">${cm.fat}g</span><span class="ml">Fat</span></div>
         </div>
       </div>
     </div>
