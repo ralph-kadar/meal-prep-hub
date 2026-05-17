@@ -57,7 +57,7 @@ export function getDefaultRemaining(ing, item) {
 
   if (ing.urgent) return 0;
 
-  const amt = [ing.quantity_csilla, ing.unit].filter(Boolean).join(' ').toLowerCase();
+  const amt = [ing.quantity_total, ing.unit].filter(Boolean).join(' ').toLowerCase();
   if (/\b(full|all remaining|all of it|last|entire)\b/.test(amt)) return 0;
 
   if (item.perishability_level === 'critical') return 0;

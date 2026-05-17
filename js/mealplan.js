@@ -3,7 +3,7 @@ import { fetchActivePlan, fetchPlanById, fetchPastPlans,
          fetchPantry, fetchCookLog,
          markMealCookedWithDeductions, unmarkMealCooked,
          replaceMealRpc }                                   from './supabase.js';
-import { RALPH_MULTIPLIERS, PROFILES }                    from './config.js';
+import { PROFILES }                                        from './config.js';
 import { flashSaved, getDefaultRemaining }                  from './ui.js';
 
 // ─── Module state ─────────────────────────────────────────
@@ -299,8 +299,7 @@ function renderDayView() {
   const day = _days[_activeDay];
   if (!day) return;
 
-  const cTot = dayTotals(day.meals, false);
-  const rTot = dayTotals(day.meals, true);
+  const tot = dayTotals(day.meals);
 
   view.innerHTML = `
     <div class="day-total-card">
@@ -309,19 +308,19 @@ function renderDayView() {
         <div class="day-total-person">
           <div class="day-total-label">👩 Csilla</div>
           <div class="day-total-macros">
-            <span><strong style="color:var(--accent)">${cTot.kcal}</strong> kcal</span>
-            <span><strong style="color:#c0392b">${cTot.protein}g</strong> P</span>
-            <span><strong style="color:#e67e22">${cTot.carbs}g</strong> C</span>
-            <span><strong style="color:#2980b9">${cTot.fat}g</strong> F</span>
+            <span><strong style="color:var(--accent)">${tot.csilla.kcal}</strong> kcal</span>
+            <span><strong style="color:#c0392b">${tot.csilla.protein}g</strong> P</span>
+            <span><strong style="color:#e67e22">${tot.csilla.carbs}g</strong> C</span>
+            <span><strong style="color:#2980b9">${tot.csilla.fat}g</strong> F</span>
           </div>
         </div>
         <div class="day-total-person">
           <div class="day-total-label ralph">🧑 Ralph</div>
           <div class="day-total-macros">
-            <span><strong style="color:var(--accent)">${rTot.kcal}</strong> kcal</span>
-            <span><strong style="color:#c0392b">${rTot.protein}g</strong> P</span>
-            <span><strong style="color:#e67e22">${rTot.carbs}g</strong> C</span>
-            <span><strong style="color:#2980b9">${rTot.fat}g</strong> F</span>
+            <span><strong style="color:var(--accent)">${tot.ralph.kcal}</strong> kcal</span>
+            <span><strong style="color:#c0392b">${tot.ralph.protein}g</strong> P</span>
+            <span><strong style="color:#e67e22">${tot.ralph.carbs}g</strong> C</span>
+            <span><strong style="color:#2980b9">${tot.ralph.fat}g</strong> F</span>
           </div>
         </div>
       </div>
@@ -334,8 +333,7 @@ function renderDayView() {
 
 // ─── Meal card ────────────────────────────────────────────
 function renderMealCard(meal, dayIdx, mealIdx) {
-  const cm      = cMacros(meal);
-  const rm      = rMacros(cm);
+  const { ralph: rm, csilla: cm } = mealMacros(meal);
   const cooked  = meal.cooked;
   const typeKey = meal.meal_type || 'dinner';
 
@@ -423,7 +421,7 @@ function buildCookPanelHtml(meal, dayIdx, mealIdx) {
     .filter(i => i.pantry_item_id && _pantryItems[i.pantry_item_id] && !_pantryItems[i.pantry_item_id].used)
     .map(ing => {
       const item   = _pantryItems[ing.pantry_item_id];
-      const amtStr = [ing.quantity_csilla, ing.unit].filter(Boolean).join(' ');
+      const amtStr = [ing.quantity_total, ing.unit].filter(Boolean).join(' ');
       const sel    = _cookSelections[ing.pantry_item_id] !== undefined
         ? _cookSelections[ing.pantry_item_id]
         : getDefaultRemaining(ing, item);
@@ -617,8 +615,7 @@ function openModal(dayIdx, mealIdx) {
   if (!meal) return;
 
   const typeKey = meal.meal_type || 'dinner';
-  const cm = cMacros(meal);
-  const rm = rMacros(cm);
+  const { ralph: rm, csilla: cm } = mealMacros(meal);
 
   const topEl     = document.getElementById('modalTop');
   const badgeEl   = document.getElementById('modalBadge');
@@ -635,7 +632,7 @@ function openModal(dayIdx, mealIdx) {
   taglineEl.textContent  = meal.tagline || '';
 
   const ingHtml = (meal.ingredients || []).map(i => {
-    const qty = i.quantity_csilla ? `${i.quantity_csilla}${i.unit ? ' ' + i.unit : ''}` : '';
+    const qty = i.quantity_total ? `${i.quantity_total}${i.unit ? ' ' + i.unit : ''}` : '';
     return `<li>
       <div class="ingredient-dot"></div>
       <span><strong>${escHtml(i.name)}</strong>${qty ? ` — ${escHtml(qty)}` : ''}</span>
@@ -973,7 +970,8 @@ ${JSON.stringify(pantrySnapshot, null, 2)}
 ── PROFILES ────────────────────────────────────────────────
 Ralph: 30y 180cm 85kg · 2300 kcal/day · 140g protein
 Csilla: 29y 156cm 56kg · 1750 kcal/day · 95g protein
-(Macros below are per Csilla's serving; Ralph +25–30% on grains & protein)
+(Macros are BATCH TOTALS. App splits onto plates via ralph_portion. Default 0.60 = Ralph 60%, Csilla 40%.
+Set ralph_portion = 0.5 for individual-bowl meals: porridge, yogurt, smoothies, one-piece snacks.)
 
 ── INSTRUCTIONS ────────────────────────────────────────────
 Design a replacement ${meal.meal_type} that:
@@ -994,16 +992,18 @@ Then write it to the database via Supabase MCP
       "name": "New Meal Name",
       "emoji": "🍽️",
       "tagline": "Short tagline ≤ 60 chars",
-      "kcal_csilla": 450,
-      "protein_csilla": 28,
-      "carbs_csilla": 45,
-      "fat_csilla": 14,
+      "kcal_total": 1150,
+      "protein_total": 70,
+      "carbs_total": 110,
+      "fat_total": 35,
+      "ralph_portion": 0.60,
+      "serves": 2,
       "tip": "Optional nutrition tip",
       "ingredients": [
         {
           "pantry_item_id": "exact-pantry-id-or-null",
           "name": "Ingredient name",
-          "quantity_csilla": "200",
+          "quantity_total": "350",
           "unit": "g",
           "is_pantry_staple": false,
           "urgent": false
@@ -1029,32 +1029,47 @@ urgent items (or why none were suitable for this slot).`;
 }
 
 // ─── Helpers ──────────────────────────────────────────────
-function cMacros(meal) {
+
+// Compute per-person macros from the batch-total columns + ralph_portion.
+// Returns { ralph: {kcal,protein,carbs,fat}, csilla: {kcal,protein,carbs,fat} }
+function mealMacros(meal) {
+  const rp = meal.ralph_portion  ?? 0.60;
+  const cp = 1 - rp;
+  const t  = {
+    kcal:    meal.kcal_total    ?? 0,
+    protein: meal.protein_total ?? 0,
+    carbs:   meal.carbs_total   ?? 0,
+    fat:     meal.fat_total     ?? 0,
+  };
   return {
-    kcal:    meal.kcal_csilla    ?? 0,
-    protein: meal.protein_csilla ?? 0,
-    carbs:   meal.carbs_csilla   ?? 0,
-    fat:     meal.fat_csilla     ?? 0,
+    ralph:  { kcal: Math.round(t.kcal * rp), protein: Math.round(t.protein * rp),
+              carbs: Math.round(t.carbs * rp), fat: Math.round(t.fat * rp) },
+    csilla: { kcal: Math.round(t.kcal * cp), protein: Math.round(t.protein * cp),
+              carbs: Math.round(t.carbs * cp), fat: Math.round(t.fat * cp) },
   };
 }
 
-function rMacros(c) {
-  return {
-    kcal:    Math.round(c.kcal    * RALPH_MULTIPLIERS.kcal),
-    protein: Math.round(c.protein * RALPH_MULTIPLIERS.protein),
-    carbs:   Math.round(c.carbs   * RALPH_MULTIPLIERS.carbs),
-    fat:     Math.round(c.fat     * RALPH_MULTIPLIERS.fat),
-  };
+// Sum per-person macros across all meals in a day.
+// Returns { ralph: {kcal,protein,carbs,fat}, csilla: {kcal,protein,carbs,fat} }
+function dayTotals(meals) {
+  const acc = { ralph: {kcal:0,protein:0,carbs:0,fat:0},
+                csilla:{kcal:0,protein:0,carbs:0,fat:0} };
+  for (const meal of meals) {
+    const m = mealMacros(meal);
+    for (const k of ['kcal','protein','carbs','fat']) {
+      acc.ralph[k]  += m.ralph[k];
+      acc.csilla[k] += m.csilla[k];
+    }
+  }
+  return acc;
 }
 
-function dayTotals(meals, useRalph) {
-  const c = {
-    kcal:    meals.reduce((s, m) => s + (m.kcal_csilla    ?? 0), 0),
-    protein: meals.reduce((s, m) => s + (m.protein_csilla ?? 0), 0),
-    carbs:   meals.reduce((s, m) => s + (m.carbs_csilla   ?? 0), 0),
-    fat:     meals.reduce((s, m) => s + (m.fat_csilla     ?? 0), 0),
-  };
-  return useRalph ? rMacros(c) : c;
+// Human-readable split label: "split 60/40", "split evenly", etc.
+function splitLabel(ralph_portion) {
+  const rp = ralph_portion ?? 0.60;
+  if (rp === 0.5) return 'split evenly';
+  const rPct = Math.round(rp * 100);
+  return `split ${rPct}/${100 - rPct}`;
 }
 
 function dayShortDate(idx) {

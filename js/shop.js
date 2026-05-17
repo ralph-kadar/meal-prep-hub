@@ -655,7 +655,7 @@ async function buildOpusPrompt() {
           meal_day:       day.day_label,
           meal_name:      meal.name,
           pantry_item_id: ing.pantry_item_id,
-          quantity_csilla: ing.quantity_csilla,
+          quantity_total: ing.quantity_total,
           unit:           ing.unit,
         });
       }
