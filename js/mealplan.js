@@ -112,7 +112,7 @@ function renderShell() {
       </div>
       <div class="person-chip portion-note">
         <strong>📏 Portion note</strong>
-        Macros shown per Csilla's serving. Ralph: +25–30% on grains &amp; protein.
+        Macros are batch totals (serves 2). Ralph plate ≈ 60%, Csilla plate ≈ 40%.
       </div>
     </div>
 
@@ -1043,7 +1043,7 @@ urgent items (or why none were suitable for this slot).`;
 // Compute per-person macros from the batch-total columns + ralph_portion.
 // Returns { ralph: {kcal,protein,carbs,fat}, csilla: {kcal,protein,carbs,fat} }
 function mealMacros(meal) {
-  const rp = meal.ralph_portion  ?? 0.60;
+  const rp = Number(meal.ralph_portion  ?? 0.60);
   const cp = 1 - rp;
   const t  = {
     kcal:    meal.kcal_total    ?? 0,
@@ -1076,7 +1076,7 @@ function dayTotals(meals) {
 
 // Human-readable split label: "split 60/40", "split evenly", etc.
 function splitLabel(ralph_portion) {
-  const rp = ralph_portion ?? 0.60;
+  const rp = Number(ralph_portion ?? 0.60);
   if (rp === 0.5) return 'split evenly';
   const rPct = Math.round(rp * 100);
   return `split ${rPct}/${100 - rPct}`;
